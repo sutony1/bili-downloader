@@ -1,0 +1,12 @@
+<!doctype html><meta charset="utf-8"><style>body{font:16px 'Microsoft YaHei',sans-serif;background:#f4f7fb;color:#203047;margin:32px}h1{font-size:26px}input{box-sizing:border-box;width:100%;padding:14px;border:1px solid #cbd5e1;border-radius:8px}button{padding:12px 20px;margin:16px 8px 0 0;border:0;border-radius:8px;background:#176bd1;color:white;cursor:pointer}button:disabled{opacity:.45;cursor:default}pre{white-space:pre-wrap;background:white;padding:20px;min-height:130px;border-radius:12px}small{color:#64748b}.card{background:white;border-radius:12px;padding:20px;margin:20px 0}#status{font-weight:bold}</style>
+<h1>B站下载助手 <small>v0.1.6</small></h1>
+<p>首次在内置浏览器中扫码或使用QQ登录，以后可直接粘贴网址。</p>
+<input id="url" placeholder="粘贴B站视频网址，或 BV 编号">
+<button onclick="send('login')">登录 / 显示浏览器</button><button id="parse" onclick="send('parse',{url:document.getElementById('url').value})">解析视频</button><button id="download" disabled onclick="send('download')">下载最高画质</button><button onclick="send('folder')">打开下载文件夹</button><button id="clear-url" onclick="clearUrl()">清空网址</button>
+<div class="card"><p id="login-state">登录状态：等待检测</p><div id="status">就绪</div><p id="info">尚未解析视频</p><small>保存到 Windows 下载文件夹。登录状态仅保存在本机专用浏览器目录。网页预览静音，下载文件保留声音。</small></div>
+<pre id="log">使用顺序：登录 → 粘贴网址 → 解析视频 → 下载最高画质。
+如果接口受到限制，请在内置浏览器播放视频、选择所需画质，再点击“解析视频”。</pre>
+<script>function clearUrl(){const input=document.getElementById('url');input.value='';input.focus();}function send(action,extra={}){window.ipc.postMessage(JSON.stringify({action,...extra}))}window.update=(x)=>{document.getElementById('status').textContent=x.status||'';if(x.info)document.getElementById('info').textContent=x.info;if(x.log)document.getElementById('log').textContent=x.log;document.getElementById('download').disabled=!x.ready;document.getElementById('parse').disabled=!!x.busy;};</script>
+<script>window.addEventListener('DOMContentLoaded',()=>requestAnimationFrame(()=>{const input=document.getElementById('url');send('ui-ready',{buttons:document.querySelectorAll('button').length,input:!!input,visible:input.getBoundingClientRect().width>0&&document.querySelector('h1').getBoundingClientRect().height>0,update:typeof window.update==='function'});}));</script>
+
+<script>window.setLogin=s=>document.getElementById('login-state').textContent='登录状态：'+s;</script>

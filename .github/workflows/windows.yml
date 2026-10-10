@@ -1,0 +1,31 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Test and build portable package
+        run: .\build.ps1 -Test
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: bili-downloader-windows-x64
+          path: |
+            dist/bili-downloader-*-windows-x64.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
