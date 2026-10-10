@@ -5,14 +5,71 @@
 ## 在另一台电脑直接运行
 
 1. 在 [Releases](https://github.com/sutony1/bili-downloader/releases/latest) 下载 Windows x64 ZIP，解压到可写文件夹。
-2. 安装或确认已有 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)。页面中可选择 Evergreen 安装程序。
-3. 从 [FFmpeg 官方下载页面](https://ffmpeg.org/download.html) 的 Windows builds 链接获取 Windows 版本。将解压出来的 **ffmpeg.exe 和 ffprobe.exe 两个文件**放在 `bili-downloader.exe` 旁边；也可以配置到系统 PATH。
+2. 按下面的“准备 WebView2”步骤安装或确认已有浏览器运行组件。
+3. 按下面的“准备 FFmpeg 和 FFprobe”步骤，将两个 EXE 放在下载助手旁边。
 4. 双击 `bili-downloader.exe`，点击“登录 / 显示浏览器”，在 B站网页扫码或使用 QQ 登录。**换到另一台电脑需要首次登录。**
 5. 粘贴视频链接或 BV 编号 →“解析视频”→“下载最高画质”。完成后用“打开下载文件夹”查看文件；“清空网址”方便继续粘贴下一个链接。
 
 运行成品不需要安装 Rust、Node.js 或 Visual Studio。程序调用 Windows 的 `curl.exe` 下载媒体，需要该命令可用。
 
 视频保存到当前 Windows 用户的 `Downloads` 文件夹。内置网页始终静音，下载完成或失败后暂停网页音视频；保存的视频保留原有声音。已有同名文件会使用新的编号，避免覆盖。
+
+### 准备 WebView2
+
+WebView2 是程序显示 B站网页和登录窗口所用的运行组件。需要安装的是 **WebView2 Runtime**。
+
+1. 打开 [微软 WebView2 下载页面](https://developer.microsoft.com/en-us/microsoft-edge/webview2/#download-section)，找到 **Download the WebView2 Runtime** 区域。
+2. 按电脑联网情况选择安装方式：
+
+   | 情况 | 下载选项 | 操作 |
+   | --- | --- | --- |
+   | 学校电脑可以联网下载安装 | **Evergreen Bootstrapper** | 点击 Download，保存并双击安装程序；它会自动下载适合当前电脑的运行组件。 |
+   | 想先在家下载，再用U盘带到学校 | **Evergreen Standalone Installer → x64** | 下载完整安装包，复制到学校的 Windows x64 电脑后双击安装。安装组件这一步不需要联网。 |
+
+3. 按提示完成安装，然后重新打开下载助手。如果安装程序提示已经安装了运行组件，可直接继续使用。
+4. 点击下载助手中的“登录 / 显示浏览器”。能够打开 B站网页，就可以继续登录。
+
+离线安装包的文件名通常为 `MicrosoftEdgeWebView2RuntimeInstallerX64.exe`；它用于安装运行组件，不需要放进下载助手文件夹。若学校电脑限制安装软件，请让管理员协助安装。上述两种安装方式见 [微软的运行组件部署说明](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)。
+
+### 准备 FFmpeg 和 FFprobe
+
+这两个工具从**同一个压缩包**中获取：`ffmpeg.exe` 用于合并音视频，`ffprobe.exe` 用于检查分辨率、时长和音视频流。
+
+推荐使用“放在程序旁边”的方式，操作如下：
+
+1. 打开 [FFmpeg 官方下载页面](https://ffmpeg.org/download.html)，在 **Windows EXE Files** 下选择 **Windows builds from gyan.dev**。也可以直接打开 [Gyan 的 Windows 构建页面](https://www.gyan.dev/ffmpeg/builds/)。
+2. 找到 **release builds** 区域，点击 **ffmpeg-release-essentials.zip**。这个 ZIP 包包含本程序需要的工具，Windows 可以直接解压。
+3. 右键下载的 ZIP，选择“全部提取”。打开解压出来的 FFmpeg 文件夹，再进入其中的 **bin** 文件夹。
+4. 从 `bin` 中复制 **ffmpeg.exe、ffprobe.exe**，粘贴到 `bili-downloader.exe` 所在的文件夹。两者需要与下载助手处于同一层目录，不能只把整个 FFmpeg 文件夹放在旁边。
+
+准备完成后，文件夹应类似这样：
+
+```text
+B站下载助手/
+├─ bili-downloader.exe
+├─ ffmpeg.exe
+├─ ffprobe.exe
+├─ README.md
+└─ 使用说明.txt
+```
+
+**这种方式不需要配置环境变量。** 如果在家提前准备，可以把整个文件夹复制到U盘，再拷到学校电脑的可写文件夹中运行；学校电脑仍需要 WebView2 Runtime，以及访问 B站的网络。
+
+### 确认准备成功
+
+在上面这个文件夹的空白处，按住 Shift 后点击鼠标右键，选择“在此处打开 PowerShell 窗口”或“在终端中打开”，依次执行：
+
+```powershell
+.\ffmpeg.exe -version
+.\ffprobe.exe -version
+curl.exe --version
+```
+
+前两个命令应分别显示以 `ffmpeg version`、`ffprobe version` 开头的版本信息；第三个命令应显示 curl 的版本。版本号可能随下载时间变化。
+
+若提示找不到 `ffmpeg.exe` 或 `ffprobe.exe`，检查两个文件是否确实放在当前文件夹中。直接双击这些命令行工具时窗口可能瞬间关闭，用上述命令检查更直观。
+
+最后双击 `bili-downloader.exe`，打开内置浏览器并登录 B站，然后试着解析、下载一个可访问的单P视频。更换电脑需要在本程序中首次登录；登录状态会保存在该电脑上。
 
 ## 从源码复现
 
