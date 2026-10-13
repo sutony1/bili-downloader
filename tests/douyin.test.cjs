@@ -22,6 +22,8 @@ const detail = { aweme_id: id, desc: 'Test', video: { duration: 12000, width: 72
  const denied = context(); denied.ctx.window.__douyinCapture.ingest({ ...detail, prevent_download: true }); assert.match(denied.run().error, /禁止下载/);
  const player = context(); player.ctx.document.querySelectorAll = s => s === 'video' ? [{ duration: 12, videoWidth: 720, videoHeight: 1280, currentSrc: 'https://v3.douyinvod.com/current' }] : [];
  assert.equal(player.run().formats[0].url, 'https://v3.douyinvod.com/current');
+ assert.equal(player.run().source, 'playback');
+ player.ctx.window.__douyinCapture.ingest({ aweme_id: id, video: { duration: 12000 } }); assert.equal(player.run().source, 'playback');
  const blob = context(); blob.ctx.document.querySelectorAll = s => s === 'video' ? [{ duration: 12, videoWidth: 720, videoHeight: 1280, currentSrc: 'blob:https://www.douyin.com/id' }] : [];
  assert.equal(blob.run().waiting, true);
  const hydration = context(); hydration.ctx.document.querySelectorAll = s => s.startsWith('script') ? [{ textContent: encodeURIComponent(JSON.stringify({ data: detail })) }] : [];

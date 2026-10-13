@@ -26,10 +26,11 @@
   add(video.play_addr || video.playAddr, 0, '默认播放版本'); add(video.play_addr_h264, 0, 'H.264'); if (!formats.length) add(video.download_addr || video.downloadAddr, 0, '下载版本');
  }
  const player = [...document.querySelectorAll('video')].find(x => Number.isFinite(x.duration) && x.duration > 0 && x.videoWidth > 0);
- if (!formats.length && player?.currentSrc && !player.currentSrc.startsWith('blob:')) add({ url_list: [player.currentSrc], width: player.videoWidth, height: player.videoHeight }, 0, '当前播放画质');
+ let playbackFallback = false;
+ if (!formats.length && player?.currentSrc && !player.currentSrc.startsWith('blob:')) { add({ url_list: [player.currentSrc], width: player.videoWidth, height: player.videoHeight }, 0, '当前播放画质'); playbackFallback = true; }
  if (!formats.length) { send({ id, waiting: true }); return; }
  formats.sort((a,b) => b.width * b.height - a.width * a.height || b.bitrate - a.bitrate);
  const distinct = formats.filter((f,i,a) => !a.slice(0,i).some(x => x.width === f.width && x.height === f.height && x.bitrate === f.bitrate)); distinct.forEach((f,i) => f.id = String(i));
  const duration = Number(video?.duration) / 1000 || player?.duration; if (!Number.isFinite(duration) || duration <= 0) { send({ id, waiting: true }); return; }
- send({ id, title: detail?.desc || document.title.replace(/[-_ ]*抖音.*$/, '') || '抖音视频', duration, formats: distinct, source: video ? 'metadata' : 'playback', userAgent: navigator.userAgent });
+ send({ id, title: detail?.desc || document.title.replace(/[-_ ]*抖音.*$/, '') || '抖音视频', duration, formats: distinct, source: playbackFallback ? 'playback' : 'metadata', userAgent: navigator.userAgent });
 })();
