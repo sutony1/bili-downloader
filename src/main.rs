@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod douyin;
 use serde_json::{json, Value};
 use std::os::windows::process::CommandExt;
 use std::{cell::RefCell, rc::Rc};
@@ -26,6 +27,8 @@ use wry::{
 #[derive(Clone, Debug)]
 enum Msg {
     Ui(Value),
+    DouyinCapture(Value),
+    DouyinOpen(String),
     Capture(Value),
     Progress(Value),
     DownloadFinished(Value),
@@ -137,7 +140,17 @@ fn extract_script(bv: &str, id: u64) -> String {
         include_str!("extract.js")
     )
 }
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
+    if let Err(error) = run() {
+        if let Ok(exe) = std::env::current_exe() {
+            let _ = std::fs::write(
+                exe.with_file_name("startup-diagnostic.txt"),
+                format!("程序启动失败：{error}"),
+            );
+        }
+    }
+}
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(input) = std::env::args().nth(1).filter(|x| x == "--verify-download") {
         let _ = input;
         let file = std::env::args().nth(2).ok_or("Missing input")?;
@@ -157,18 +170,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let events = EventLoopBuilder::<Msg>::with_user_event().build();
     let proxy = events.create_proxy();
     let window = WindowBuilder::new()
-        .with_title("B站下载助手 v0.1.6")
-        .with_visible(!media_smoke && parse_test.is_none())
-        .with_inner_size(LogicalSize::new(800., 590.))
+        .with_title("视频下载助手 v0.2.0 试用版")
+        .with_visible(
+            !media_smoke
+                && parse_test.is_none()
+                && !std::env::args().any(|a| a == "--douyin-smoke-test" || a == "--ui-review-test"),
+        )
+        .with_inner_size(LogicalSize::new(900., 730.))
         .build(&events)?;
     let browser_window = WindowBuilder::new()
         .with_title("B站登录与视频画质 — 下载助手")
         .with_visible(false)
         .with_inner_size(LogicalSize::new(1100., 800.))
         .build(&events)?;
-    let profile = PathBuf::from(std::env::var("LOCALAPPDATA")?)
-        .join("BiliDownloader")
-        .join("BrowserProfile");
+    let profile = if std::env::args().any(|a| a == "--isolated-test-profile") {
+        std::env::current_dir()?
+            .join("verification")
+            .join("BiliTestProfile")
+    } else {
+        PathBuf::from(std::env::var("LOCALAPPDATA")?)
+            .join("BiliDownloader")
+            .join("BrowserProfile")
+    };
     std::fs::create_dir_all(&profile)?;
     let mut context = WebContext::new(Some(profile));
     let p = proxy.clone();
@@ -222,6 +245,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut current_url = String::new();
     let mut selected: Option<Value> = None;
     let busy = Arc::new(AtomicBool::new(false));
+    let mut dy = douyin::Douyin::new(&events)?;
     let downloads = PathBuf::from(std::env::var("USERPROFILE")?).join("Downloads");
     std::fs::create_dir_all(&downloads)?;
     let mut pending: Option<Instant> = None;
@@ -250,12 +274,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
  *flow=ControlFlow::WaitUntil(Instant::now()+Duration::from_millis(300));
  let display=|x:Value|{let _=ui.evaluate_script(&format!("window.update({});",x));};
  match event{
- Event::WindowEvent{window_id,event:WindowEvent::CloseRequested,..}=>{if window_id==window.id(){*flow=ControlFlow::Exit}else if window_id==popup_window.id(){popup_window.set_visible(false)}else{stop_preview(&browser,None);browser_window.set_visible(false)}},
+ Event::WindowEvent{window_id,event:WindowEvent::CloseRequested,..}=>{if window_id==window.id(){*flow=ControlFlow::Exit}else if window_id==dy.window.id(){dy.stop();dy.window.set_visible(false)}else if window_id==popup_window.id(){popup_window.set_visible(false)}else{stop_preview(&browser,None);browser_window.set_visible(false)}},
+ Event::UserEvent(Msg::Ui(v)) if v["platform"]=="douyin"=>{if v["action"]=="platform-selected"{stop_preview(&browser,popup_view.borrow().as_ref());}if parse_deadline.is_none(){dy.ui(&v,&ui,&proxy,&busy,&downloads);}},
+ Event::UserEvent(Msg::DouyinCapture(v))=>dy.captured(v,&ui,&proxy,&busy,&downloads),
+ Event::UserEvent(Msg::DouyinOpen(u))=>{let _=dy.browser.load_url(&u);dy.window.set_visible(true);dy.window.set_focus();},
  Event::UserEvent(Msg::Ui(v))=>match v["action"].as_str().unwrap_or(""){
- "ui-ready"=>{if let Some(ref bv)=parse_test{let _=proxy.send_event(Msg::Ui(json!({"action":"parse","url":bv})));}if smoke{let valid=v["buttons"].as_u64()==Some(5)&&v["input"].as_bool()==Some(true)&&v["visible"].as_bool()==Some(true)&&v["update"].as_bool()==Some(true);let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("smoke-test.txt"),if valid{"PASS: HTML rendered, five buttons and URL input visible, JavaScript and IPC ready"}else{"FAIL: HTML readiness check failed"});*flow=ControlFlow::Exit;}},
+ "ui-ready"=>{if let Some(ref bv)=parse_test{let _=proxy.send_event(Msg::Ui(json!({"action":"parse","url":bv})));}if smoke{let valid=v["buttons"].as_u64()==Some(7)&&v["tabs"].as_u64()==Some(2)&&v["input"].as_bool()==Some(true)&&v["visible"].as_bool()==Some(true)&&v["update"].as_bool()==Some(true);let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("smoke-test.txt"),if valid{"PASS: HTML rendered, two platform tabs, five action buttons and URL input visible, JavaScript and IPC ready"}else{"FAIL: HTML readiness check failed"});*flow=ControlFlow::Exit;}},
  "login"=>{login_open=true;let target=if current_url.is_empty(){"https://www.bilibili.com/"}else{&current_url};let _=browser.load_url(target);login_probe=Some(Instant::now()+Duration::from_secs(3));browser_window.set_visible(true);browser_window.set_focus();},
+ "platform-selected"=>{dy.stop();},
+ "clear" if !busy.load(Ordering::Relaxed)&&parse_deadline.is_none()=>{selected=None;stop_preview(&browser,None);},
  "folder"=>{let _=command("explorer.exe").arg(&downloads).spawn();},
- "parse" if !busy.load(Ordering::Relaxed)=>{if let Some(bv)=bvid(v["url"].as_str().unwrap_or("")){selected=None;wanted=bv;parse_request+=1;parse_attempts=0;parse_deadline=Some(Instant::now()+Duration::from_secs(35));let u=format!("https://www.bilibili.com/video/{wanted}/");current_url=u.clone();if delayed_test{delayed_navigation=Some((Instant::now()+Duration::from_secs(6),u));}else{let _=browser.load_url(&u);}pending=Some(Instant::now()+Duration::from_secs(1));display(json!({"status":"正在解析…","info":"正在加载视频页面","log":"正在等待页面就绪；若网络请求失败，会显示具体原因。","busy":true}));}else{display(json!({"status":"请输入有效的 bilibili.com 视频网址或BV编号"}));}},
+ "parse" if !busy.load(Ordering::Relaxed)&&!dy.parsing()&&parse_deadline.is_none()=>{if let Some(bv)=bvid(v["url"].as_str().unwrap_or("")){selected=None;wanted=bv;parse_request+=1;parse_attempts=0;parse_deadline=Some(Instant::now()+Duration::from_secs(35));let u=format!("https://www.bilibili.com/video/{wanted}/");current_url=u.clone();if delayed_test{delayed_navigation=Some((Instant::now()+Duration::from_secs(6),u));}else{let _=browser.load_url(&u);}pending=Some(Instant::now()+Duration::from_secs(1));display(json!({"status":"正在解析…","info":"正在加载视频页面","log":"正在等待页面就绪；若网络请求失败，会显示具体原因。","ready":false,"busy":true}));}else{display(json!({"status":"请输入有效的 bilibili.com 视频网址或BV编号"}));}},
  "download" if !busy.load(Ordering::Relaxed)=>{if let Some(data)=selected.clone(){busy.store(true,Ordering::Relaxed);let p=proxy.clone();let dir=downloads.clone();let lock=busy.clone();display(json!({"status":"开始下载","busy":true}));std::thread::spawn(move||{let result=download(&data,&dir,|x|{let _=p.send_event(Msg::Progress(x));});lock.store(false,Ordering::Relaxed);let x=match result{Ok(x)=>x,Err(e)=>json!({"status":"下载失败","log":e,"ready":true})};let _=p.send_event(Msg::DownloadFinished(x));});}},_=>{}},
  Event::UserEvent(Msg::Capture(v))=>{
  if v["action"]=="auth-return"{let _=proxy.send_event(Msg::PopupClosed);}
@@ -273,13 +302,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
    }else{parse_deadline=None;pending=None;display(json!({"status":"解析结果不完整","log":"未取得有效音视频地址，请重试。","busy":false}));if parse_test.is_some(){let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("parse-smoke-test.json"),"{\"error\":\"invalid media URL\"}");*flow=ControlFlow::Exit;}}
  }},
  Event::UserEvent(Msg::Progress(x))=>display(x),
- Event::UserEvent(Msg::DownloadFinished(x))=>{stop_preview(&browser,popup_view.borrow().as_ref());display(x);},
+ Event::UserEvent(Msg::DownloadFinished(mut x))=>{x["busy"]=json!(false);if x["platform"]=="douyin"{dy.finished(&x);}else{stop_preview(&browser,popup_view.borrow().as_ref());}display(x);},
  Event::UserEvent(Msg::MediaStarted(ok))=>{if !ok{let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("media-smoke-test.txt"),"FAIL: test media did not play");*flow=ControlFlow::Exit;}else{let _=proxy.send_event(Msg::DownloadFinished(json!({"status":"下载完成 ✓","ready":true})));}},
  Event::UserEvent(Msg::MediaStopped(paused))=>{let muted=browser_is_muted(&browser).unwrap_or(false);let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("media-smoke-test.txt"),if paused&&muted{"PASS: native browser muted; playing media paused after DownloadFinished"}else{"FAIL: mute or pause check failed"});*flow=ControlFlow::Exit;},
  Event::UserEvent(Msg::PopupClosed)=>{popup_window.set_visible(false);if !oauth_smoke{let target=if current_url.is_empty(){"https://www.bilibili.com/"}else{&current_url};let _=browser.load_url(target);login_probe=Some(Instant::now()+Duration::from_secs(3));browser_window.set_visible(true);browser_window.set_focus();}},
  Event::UserEvent(Msg::Loaded(u,popup))=>{auth_log(if popup{"popup"}else{"browser"},&u);if !popup&&parse_deadline.is_some()&&bvid(&u).as_deref()==Some(&wanted){pending=Some(Instant::now()+Duration::from_millis(250));}if !popup&&login_open&&(!return_smoke||oauth_checked){if u=="about:blank"||u.starts_with("about:blank#"){let _=proxy.send_event(Msg::PopupClosed);}else if host_allowed(&u,"bilibili.com"){login_probe=Some(Instant::now()+Duration::from_secs(2));}}},
  Event::UserEvent(Msg::PopupTest(ok))=>{let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("oauth-smoke-test.txt"),if ok{"PASS: popup created in shared environment; opener and callback work"}else{"FAIL: popup opener callback failed"});*flow=ControlFlow::Exit;},
  Event::MainEventsCleared=>{
+ dy.tick(&ui,&proxy,&busy,&downloads);if dy.finished_test{*flow=ControlFlow::Exit;}
  if delayed_navigation.as_ref().is_some_and(|(t,_)|Instant::now()>=*t){if let Some((_,u))=delayed_navigation.take(){let _=browser.load_url(&u);}}
  if parse_deadline.is_some_and(|t|Instant::now()>=t){parse_deadline=None;pending=None;display(json!({"status":"解析超时，可重试","log":"视频页面或接口未及时响应，请检查网络，或显示浏览器确认网页状态后重试。","busy":false}));if parse_test.is_some(){let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("parse-smoke-test.json"),"{\"error\":\"parse timeout\"}");*flow=ControlFlow::Exit;}}
 

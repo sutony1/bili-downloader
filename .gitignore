@@ -17,6 +17,9 @@
 /parse-*-test.json
 /parse-smoke-test.json
 /result.json
+/*-test.json
+/.douyin-*.part
+*.part
 .env
 .env.*
 cookies*.txt

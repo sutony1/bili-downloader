@@ -7,6 +7,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Rust tests failed.' }
         node tests/extract.test.cjs
         if ($LASTEXITCODE -ne 0) { throw 'JavaScript tests failed.' }
+        node tests/douyin.test.cjs
+        if ($LASTEXITCODE -ne 0) { throw 'Douyin JavaScript tests failed.' }
     }
     cargo build --release --locked
     if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }

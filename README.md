@@ -1,18 +1,32 @@
-# B站下载助手
+# 视频下载助手：B站 / 抖音
 
-用 Rust 编写的 Windows 桌面视频下载工具，当前版本 **v0.1.6**。通过内置 B站网页登录，获取当前账号可以访问的画质，下载音视频并合并成 MP4。
+用 Rust 编写的 Windows 桌面视频下载工具，当前分支为 **v0.2.0 试用版**。提供“B站下载”和“抖音下载”两个选项卡，分别保存网址、解析结果和本机网页登录状态。B站继续下载音视频并合并成 MP4；抖音支持普通单条短视频、可用画质选择和文件核验。
+
+新增抖音功能前的稳定版已保存为 [pre-douyin-v0.1.6 回退标签](https://github.com/sutony1/bili-downloader/tree/pre-douyin-v0.1.6)。仍需原版时，可下载 [v0.1.6 稳定版](https://github.com/sutony1/bili-downloader/releases/tag/v0.1.6)。
 
 ## 在另一台电脑直接运行
 
-1. 在 [Releases](https://github.com/sutony1/bili-downloader/releases/latest) 下载 Windows x64 ZIP，解压到可写文件夹。
+1. 在 [v0.2.0 试用版](https://github.com/sutony1/bili-downloader/releases/tag/v0.2.0) 下载 Windows x64 ZIP，解压到可写文件夹。
 2. 按下面的“准备 WebView2”步骤安装或确认已有浏览器运行组件。
 3. 按下面的“准备 FFmpeg 和 FFprobe”步骤，将两个 EXE 放在下载助手旁边。
-4. 双击 `bili-downloader.exe`，点击“登录 / 显示浏览器”，在 B站网页扫码或使用 QQ 登录。**换到另一台电脑需要首次登录。**
-5. 粘贴视频链接或 BV 编号 →“解析视频”→“下载最高画质”。完成后用“打开下载文件夹”查看文件；“清空网址”方便继续粘贴下一个链接。
+4. 双击 `bili-downloader.exe`，选择“B站下载”或“抖音下载”。需要登录时点击“登录 / 显示浏览器”，在对应的官方网页操作。B站支持扫码或 QQ 登录；抖音按网页提示扫码或手机号登录。**两个平台需要分别登录，换电脑也需要首次登录。**
+5. B站：粘贴视频链接或 BV 编号 →“解析视频”→“下载最高画质”。抖音：粘贴单条视频链接 →“解析视频”→选择画质→“下载所选画质”。完成后用“打开下载文件夹”查看文件；“清空网址”会清空网址和旧解析结果。
 
 运行成品不需要安装 Rust、Node.js 或 Visual Studio。程序调用 Windows 的 `curl.exe` 下载媒体，需要该命令可用。
 
 视频保存到当前 Windows 用户的 `Downloads` 文件夹。内置网页始终静音，下载完成或失败后暂停网页音视频；保存的视频保留原有声音。已有同名文件会使用新的编号，避免覆盖。
+
+### 抖音试用范围与画质说明
+
+- 支持 `https://www.douyin.com/video/作品编号`、分享短链接 `https://v.douyin.com/.../`，以及带明确 `modal_id` 的作品链接；会转换为对应的单条视频页面。
+- 不支持仅含关键词的搜索页、搜索列表、图文、直播或批量下载。
+- 网页返回多个视频版本时，画质下拉框显示分辨率和可取得的码率，默认按分辨率、码率选择最高可用版本。
+- 若仅能读取播放器正在使用的地址，下拉框会标注“当前播放画质”，并提示**不代表作品全部版本**。可显示浏览器，登录并调整播放器画质后重新解析；不会把低清视频放大并声称高清。
+- 需要登录或验证时在官方网页完成，再重新解析；程序不自行生成或破解接口签名。
+- 普通短视频直接保存已有音视频文件，不重新压缩；FFprobe 检查视频流、分辨率和完整时长。源视频没有音轨时，会明确提示。
+- 抖音网页变化、账号权限、资源过期或特殊封装可能导致解析/下载失败。这是试用版，尚未验证所有作品类型与登录验证场景。
+
+网页登录资料分别保存在 `%LOCALAPPDATA%\BiliDownloader\BrowserProfile`（B站，沿用原版）和 `%LOCALAPPDATA%\BiliDownloader\DouyinBrowserProfile`（抖音）。两者也与系统 Edge 的登录独立；程序不要求手工粘贴密码或 Cookie。
 
 ### 准备 WebView2
 
@@ -87,6 +101,7 @@ curl.exe --version
 ```powershell
 git clone https://github.com/sutony1/bili-downloader.git
 cd bili-downloader
+git checkout v0.2.0
 cargo build --release --locked
 .\target\release\bili-downloader.exe
 ```
@@ -108,13 +123,14 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```powershell
 cargo test --locked
 node tests/extract.test.cjs
+node tests/douyin.test.cjs
 ```
 
 在本机验证界面和播放控制：
 
 ```powershell
-.\target\release\bili-downloader.exe --smoke-test
-.\target\release\bili-downloader.exe --media-smoke-test
+.\target\release\bili-downloader.exe --smoke-test --isolated-test-profile
+.\target\release\bili-downloader.exe --media-smoke-test --isolated-test-profile
 ```
 
 程序退出后，检查 EXE 同目录中的 `smoke-test.txt` 和 `media-smoke-test.txt` 是否以 `PASS` 开头。媒体测试检查真实播放的测试音频在下载结束事件后被暂停，并检查 WebView2 静音状态。
@@ -127,10 +143,18 @@ node tests/extract.test.cjs
 
 将 `<BV编号>` 替换为实际编号，不包含尖括号。结果写入 EXE 同目录的 `parse-smoke-test.json`。这个测试需要当前电脑已在本程序中登录、网络能访问 B站，以及视频可访问。可附加 `--delayed-navigation` 验证延迟加载。
 
+抖音真实解析可使用以下命令，将 `<单条视频链接>` 替换为自己的链接：
+
+```powershell
+.\target\release\bili-downloader.exe --douyin-smoke-test "<单条视频链接>"
+```
+
+结果写入 EXE 同目录的 `douyin-test.json`，不会写入临时播放地址或 Cookie。附加 `--download-test` 可进一步下载并核验，会在 Windows 下载文件夹中保存视频。网页登录和带登录凭据的 CDN 请求仍需人工在官方网页完成登录；本次自动测试不覆盖所有登录验证方式。
+
 常见情况：
 
 - **未找到 FFmpeg**：同时准备 `ffmpeg.exe` 和 `ffprobe.exe`，放在程序旁边。
-- **解析失败/超时**：点击“登录 / 显示浏览器”，确认登录和目标页面能正常加载后重试。解析整体最多等待 35 秒，接口请求有超时和重试。
+- **解析失败/超时**：点击“登录 / 显示浏览器”，确认登录和目标页面能正常加载后重试。B站最多等待 35 秒，抖音最多等待 50 秒。
 - **网页跳转异常**：`login-diagnostic.txt` 记录跳转域名与路径，不记录查询参数、Cookie 或账号信息。
 - **下载链接过期**：重新解析后再下载。下载失败时暂存文件保留在下载文件夹的 `.bili-` 子目录；成功后自动清理。
 
@@ -140,12 +164,13 @@ node tests/extract.test.cjs
 
 音视频分别下载，FFmpeg 以 `-c copy` 合并，FFprobe 核验音视频流和时长。支持 B站 `bilivideo.com`、`bilivideo.cn` 资源地址，并优先选取常规 CDN 备用地址。
 
-当前仅支持单P视频和单个下载任务，尚无批量队列、取消、断点续传或安装包。网站接口和验证机制变化可能影响解析。
+当前支持 B站单P视频、抖音普通单条短视频和单个下载任务，尚无批量队列、取消、断点续传或安装包。网站接口和验证机制变化可能影响解析。解析或下载期间暂时锁定选项卡，避免任务与当前界面错位；两个平台的结果分别保存。
 
 登录状态保存在本机 `%LOCALAPPDATA%\BiliDownloader\BrowserProfile`，与 Edge/Codex 浏览器分别保存。程序通过 B站及 QQ 官方网页完成登录；仓库和发行包不包含浏览器配置、Cookie、测试下载内容或临时播放链接。
 
 ## 版本记录
 
+- v0.2.0（试用）：两个平台选项卡，独立抖音网页登录目录，单条作品链接解析、可用画质选择与 MP4 核验；保留 B站功能和原有登录目录。
 - v0.1.6：新增“清空网址”，清空后自动聚焦输入框。
 - v0.1.5：修复 `bilivideo.cn` 音频解析，增加页面等待、超时和错误反馈。
 - v0.1.4：网页静音，下载结束后暂停网页音视频。
