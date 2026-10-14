@@ -1,20 +1,36 @@
-# 视频下载助手：B站 / 抖音
+# 视频下载助手：B站 / 抖音 / YouTube
 
-用 Rust 编写的 Windows 桌面视频下载工具，当前分支为 **v0.2.0 试用版**。提供“B站下载”和“抖音下载”两个选项卡，分别保存网址、解析结果和本机网页登录状态。B站继续下载音视频并合并成 MP4；抖音支持普通单条短视频、可用画质选择和文件核验。
+用 Rust 编写的 Windows 桌面视频下载工具，当前分支为 **v0.3.0 试用版**。提供“B站下载”“抖音下载”“YouTube 下载”三个选项卡，分别保存网址、解析结果和本机网页登录状态。B站继续下载音视频并合并成 MP4；抖音和 YouTube 支持单条视频、可用画质选择和文件核验。
 
 新增抖音功能前的稳定版已保存为 [pre-douyin-v0.1.6 回退标签](https://github.com/sutony1/bili-downloader/tree/pre-douyin-v0.1.6)。仍需原版时，可下载 [v0.1.6 稳定版](https://github.com/sutony1/bili-downloader/releases/tag/v0.1.6)。
 
 ## 在另一台电脑直接运行
 
-1. 在 [v0.2.0 试用版](https://github.com/sutony1/bili-downloader/releases/tag/v0.2.0) 下载 Windows x64 ZIP，解压到可写文件夹。
+1. 在 [v0.3.0 试用版](https://github.com/sutony1/bili-downloader/releases/tag/v0.3.0) 下载 Windows x64 ZIP，解压到可写文件夹。
 2. 按下面的“准备 WebView2”步骤安装或确认已有浏览器运行组件。
 3. 按下面的“准备 FFmpeg 和 FFprobe”步骤，将两个 EXE 放在下载助手旁边。
-4. 双击 `bili-downloader.exe`，选择“B站下载”或“抖音下载”。需要登录时点击“登录 / 显示浏览器”，在对应的官方网页操作。B站支持扫码或 QQ 登录；抖音按网页提示扫码或手机号登录。**两个平台需要分别登录，换电脑也需要首次登录。**
-5. B站：粘贴视频链接或 BV 编号 →“解析视频”→“下载最高画质”。抖音：粘贴单条视频链接 →“解析视频”→选择画质→“下载所选画质”。完成后用“打开下载文件夹”查看文件；“清空网址”会清空网址和旧解析结果。
+4. 双击 `bili-downloader.exe`，选择对应平台的选项卡。需要登录时点击“登录 / 显示浏览器”，在对应的官方网页操作。B站支持扫码或 QQ 登录；抖音按网页提示扫码或手机号登录。**各平台登录独立，换电脑需要首次登录。YouTube 公开视频通常无需登录；需要账号时才勾选使用登录状态。**
+5. B站：粘贴视频链接或 BV 编号 →“解析视频”→“下载最高画质”。抖音 / YouTube：粘贴单条视频链接 →“解析视频”→选择画质→“下载所选画质”。完成后用“打开下载文件夹”查看文件；“清空网址”会清空网址和旧解析结果。
 
 运行成品不需要安装 Rust、Node.js 或 Visual Studio。程序调用 Windows 的 `curl.exe` 下载媒体，需要该命令可用。
 
 视频保存到当前 Windows 用户的 `Downloads` 文件夹。内置网页始终静音，下载完成或失败后暂停网页音视频；保存的视频保留原有声音。已有同名文件会使用新的编号，避免覆盖。
+
+### YouTube 组件与使用方法
+
+新增 YouTube 功能前的 v0.2.0 已保存为 [pre-youtube-v0.2.0 回退标签](https://github.com/sutony1/bili-downloader/tree/pre-youtube-v0.2.0)，可继续下载 [v0.2.0 版本](https://github.com/sutony1/bili-downloader/releases/tag/v0.2.0)。
+
+1. 解压程序后，双击同目录的 **准备YouTube组件.cmd**。脚本 `prepare-youtube.ps1` 会从官方 GitHub 下载 yt-dlp 2026.08.19 和 Deno 2.9.7，核对 SHA256 后将 `yt-dlp.exe`、`deno.exe` 放到程序旁边，不需管理员权限，也不修改环境变量。组件约数十 MB，需能够访问 GitHub。
+2. 如果脚本下载失败，可从 [yt-dlp 官方发布页](https://github.com/yt-dlp/yt-dlp/releases) 下载 **yt-dlp.exe**；从 [Deno 官方发布页](https://github.com/denoland/deno/releases) 下载 **deno-x86_64-pc-windows-msvc.zip**，解压出 **deno.exe**，两者放在 `bili-downloader.exe` 旁边。已有 Node.js 22+ 时程序也能调用 Node；FFmpeg / FFprobe 仍按下文准备。
+3. 在“YouTube 下载”选项卡粘贴视频链接，点击“解析视频”，选择画质后下载。支持 `youtube.com/watch?v=...`、`youtu.be/...`、Shorts；带播放列表参数的单条视频只下载该视频。暂不支持整个播放列表、正在直播或未开播的视频。
+4. 画质按分辨率、帧率排序，同等画质优先 H.264；下拉框标明编码及容器。MP4 版本直接保存或与原音轨合并，WebM 视频轨保存为 MKV，均不重新压缩。FFprobe 检查所选分辨率、完整时长与音轨。
+5. 公开视频优先不登录直接解析；需要账号时点击“登录 / 显示浏览器”，在官方网页登录后勾选 **使用本程序中保存的 YouTube 登录状态**，再解析。Google 可能限制内置浏览器登录，受限视频、地区权限、验证及 PO Token 场景尚未全面覆盖；不要把公开视频测试通过理解为所有账号视频都能下载。
+
+YouTube 登录保存在 `%LOCALAPPDATA%\BiliDownloader\YouTubeBrowserProfile`，与其他平台、系统 Edge 分开。勾选使用登录状态时，只把本程序中 YouTube 域的 Cookie 临时交给本机 yt-dlp，任务结束自动删除任务文件；不会读取其他平台账号，也不需要把密码或 Cookie 粘贴到界面。
+
+电脑网络必须能访问 YouTube。yt-dlp 使用已有网络代理配置，组件准备脚本使用 Windows 网络设置，程序不修改系统代理。若浏览器可播放但程序请求失败，请检查代理是否覆盖桌面程序、组件版本以及网站返回的错误。
+
+YouTube 的 JavaScript 挑战使用 yt-dlp 官方解析组件及 Deno/Node 运行时，参见 [官方 EJS 说明](https://github.com/yt-dlp/yt-dlp/wiki/EJS)；官方 Windows yt-dlp.exe 已包含相应 EJS 脚本。网站机制变化时可按官方说明更新组件。安装脚本中的版本和 SHA256 为本次验证版本。
 
 ### 抖音试用范围与画质说明
 
@@ -101,7 +117,7 @@ curl.exe --version
 ```powershell
 git clone https://github.com/sutony1/bili-downloader.git
 cd bili-downloader
-git checkout v0.2.0
+git checkout v0.3.0
 cargo build --release --locked
 .\target\release\bili-downloader.exe
 ```
@@ -114,7 +130,7 @@ cargo build --release --locked
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-输出 ZIP 位于 `dist`。打包脚本只包含程序、README 和使用说明，不包含 FFmpeg、浏览器配置或测试视频。
+输出 ZIP 位于 `dist`。打包脚本只包含程序、README 和使用说明，不包含 FFmpeg、yt-dlp/Deno 二进制、浏览器配置或测试视频。
 
 ## 验证与排错
 
@@ -154,7 +170,7 @@ node tests/douyin.test.cjs
 常见情况：
 
 - **未找到 FFmpeg**：同时准备 `ffmpeg.exe` 和 `ffprobe.exe`，放在程序旁边。
-- **解析失败/超时**：点击“登录 / 显示浏览器”，确认登录和目标页面能正常加载后重试。B站最多等待 35 秒，抖音最多等待 50 秒。
+- **解析失败/超时**：点击“登录 / 显示浏览器”，确认登录和目标页面能正常加载后重试。B站最多等待 35 秒，抖音最多等待 50 秒，YouTube 解析最多等待 110 秒。
 - **网页跳转异常**：`login-diagnostic.txt` 记录跳转域名与路径，不记录查询参数、Cookie 或账号信息。
 - **下载链接过期**：重新解析后再下载。下载失败时暂存文件保留在下载文件夹的 `.bili-` 子目录；成功后自动清理。
 
@@ -164,11 +180,13 @@ node tests/douyin.test.cjs
 
 音视频分别下载，FFmpeg 以 `-c copy` 合并，FFprobe 核验音视频流和时长。支持 B站 `bilivideo.com`、`bilivideo.cn` 资源地址，并优先选取常规 CDN 备用地址。
 
-当前支持 B站单P视频、抖音普通单条短视频和单个下载任务，尚无批量队列、取消、断点续传或安装包。网站接口和验证机制变化可能影响解析。解析或下载期间暂时锁定选项卡，避免任务与当前界面错位；两个平台的结果分别保存。
+当前支持 B站单P视频、抖音普通单条短视频、YouTube 单条视频和单个下载任务，尚无批量队列、取消、断点续传或安装包。网站接口和验证机制变化可能影响解析。解析或下载期间暂时锁定选项卡，避免任务与当前界面错位；各平台的结果分别保存。
 
 登录状态保存在本机 `%LOCALAPPDATA%\BiliDownloader\BrowserProfile`，与 Edge/Codex 浏览器分别保存。程序通过 B站及 QQ 官方网页完成登录；仓库和发行包不包含浏览器配置、Cookie、测试下载内容或临时播放链接。
 
 ## 版本记录
+
+- v0.3.0（试用）：新增 YouTube 选项卡、独立登录目录、可用画质选择、音视频下载合并与核验，附官方组件准备脚本。
 
 - v0.2.0（试用）：两个平台选项卡，独立抖音网页登录目录，单条作品链接解析、可用画质选择与 MP4 核验；保留 B站功能和原有登录目录。
 - v0.1.6：新增“清空网址”，清空后自动聚焦输入框。

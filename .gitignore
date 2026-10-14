@@ -20,6 +20,9 @@
 /*-test.json
 /.douyin-*.part
 *.part
+/tools/
+*.download
+/deno-runtime-extracted/
 .env
 .env.*
 cookies*.txt
