@@ -19,8 +19,8 @@ try {
     $taskName = "bili-downloader-v$taskVersion-windows-x64"
     $taskPackage = Join-Path $PSScriptRoot "dist\$taskName"
     New-Item -ItemType Directory -Path $taskPackage -Force | Out-Null
-    Copy-Item -LiteralPath 'target\release\bili-downloader.exe','README.md','使用说明.txt' -Destination $taskPackage -Force
-    $taskFiles = @('bili-downloader.exe','README.md','使用说明.txt') | ForEach-Object { Join-Path $taskPackage $_ }
+    Copy-Item -LiteralPath 'target\release\bili-downloader.exe','README.md','使用说明.txt','准备YouTube组件.cmd','prepare-youtube.ps1' -Destination $taskPackage -Force
+    $taskFiles = @('bili-downloader.exe','README.md','使用说明.txt','准备YouTube组件.cmd','prepare-youtube.ps1') | ForEach-Object { Join-Path $taskPackage $_ }
     $taskArchive = Join-Path $PSScriptRoot "dist\$taskName.zip"
     Compress-Archive -LiteralPath $taskFiles -DestinationPath $taskArchive -Force
     $taskHash = (Get-FileHash -LiteralPath $taskArchive -Algorithm SHA256).Hash.ToLowerInvariant()
