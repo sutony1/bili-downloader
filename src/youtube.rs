@@ -442,6 +442,7 @@ pub struct YouTube {
     request: u64,
     next_login: Instant,
     login_open: bool,
+    login_pending: Arc<AtomicBool>,
     use_login: bool,
     test_url: Option<String>,
     test_started: bool,
@@ -491,6 +492,7 @@ impl YouTube {
             request: 0,
             next_login: Instant::now(),
             login_open: false,
+            login_pending: Arc::new(AtomicBool::new(false)),
             use_login: false,
             test_url,
             test_started: false,
@@ -502,30 +504,39 @@ impl YouTube {
     pub fn stop(&self) {
         stop_preview(&self.browser, None);
     }
-    fn cookies(&self, enabled: bool) -> String {
+    pub fn close_browser(&mut self) {
+        self.login_open = false;
+        self.stop();
+        self.window.set_visible(false);
+    }
+    fn with_cookies(
+        &self,
+        enabled: bool,
+        done: impl FnOnce(Result<String, String>) + Send + 'static,
+    ) {
         if !enabled {
-            return String::new();
+            done(Ok(String::new()));
+            return;
         }
-        let Ok(cookies) = self.browser.cookies_for_url("https://www.youtube.com/") else {
-            return String::new();
-        };
+        browser_cookies::read(&self.browser, "https://www.youtube.com/", move |result| {
+            done(result.map(Self::cookie_file));
+        });
+    }
+    fn cookie_file(cookies: Vec<browser_cookies::BrowserCookie>) -> String {
         let mut output = String::from("# Netscape HTTP Cookie File\n");
         for c in cookies {
-            let domain = c.domain().unwrap_or("www.youtube.com");
+            let domain = c.domain.as_str();
             if domain.trim_start_matches('.') != "youtube.com" && !domain.ends_with(".youtube.com")
             {
                 continue;
             }
-            let path = c.path().unwrap_or("/");
-            let fields = [domain, path, c.name(), c.value()];
+            let path = c.path.as_str();
+            let fields = [domain, path, &c.name, &c.value];
             if fields.iter().any(|s| s.contains(['\r', '\n', '\t'])) {
                 continue;
             }
-            let expiry = c
-                .expires_datetime()
-                .map(|v| v.unix_timestamp())
-                .unwrap_or(0);
-            let d = if c.http_only().unwrap_or(false) {
+            let expiry = c.expires;
+            let d = if c.http_only {
                 format!("#HttpOnly_{domain}")
             } else {
                 domain.to_owned()
@@ -539,14 +550,10 @@ impl YouTube {
                     "FALSE"
                 },
                 path,
-                if c.secure().unwrap_or(false) {
-                    "TRUE"
-                } else {
-                    "FALSE"
-                },
+                if c.secure { "TRUE" } else { "FALSE" },
                 expiry,
-                c.name(),
-                c.value()
+                c.name,
+                c.value
             ));
         }
         output
@@ -593,7 +600,6 @@ impl YouTube {
                 self.current_url = format!("https://www.youtube.com/watch?v={id}");
                 self.request += 1;
                 self.use_login = v["useLogin"] == true;
-                let cookies = self.cookies(self.use_login);
                 let raw = self.current_url.clone();
                 let request = self.request;
                 let p = proxy.clone();
@@ -603,10 +609,12 @@ impl YouTube {
                     ui,
                     json!({"status":"正在解析 YouTube 视频…","ready":false,"busy":true,"formats":[],"info":"正在获取可用画质","log":"首次解析可能需要几十秒。使用电脑已有网络配置，不改变系统设置。"}),
                 );
-                std::thread::spawn(move || {
-                    let result = parse(&raw, &cookies);
-                    lock.store(false, Ordering::Relaxed);
-                    let _ = p.send_event(Msg::YouTubeParsed(request, result));
+                self.with_cookies(self.use_login, move |cookies| {
+                    std::thread::spawn(move || {
+                        let result = cookies.and_then(|cookies| parse(&raw, &cookies));
+                        lock.store(false, Ordering::Relaxed);
+                        let _ = p.send_event(Msg::YouTubeParsed(request, result));
+                    });
                 });
             }
             "download" if !busy.load(Ordering::Relaxed) => {
@@ -621,7 +629,6 @@ impl YouTube {
                 else {
                     return;
                 };
-                let cookies = self.cookies(self.use_login);
                 let dir = downloads.clone();
                 let p = proxy.clone();
                 let lock = busy.clone();
@@ -631,18 +638,22 @@ impl YouTube {
                     ui,
                     json!({"status":"开始下载 YouTube 视频","busy":true,"ready":false}),
                 );
-                std::thread::spawn(move || {
-                    let result = download_video(&data, &f, &cookies, &dir, |mut x| {
+                self.with_cookies(self.use_login, move |cookies| {
+                    std::thread::spawn(move || {
+                        let result = cookies.and_then(|cookies| {
+                            download_video(&data, &f, &cookies, &dir, |mut x| {
+                                x["platform"] = json!("youtube");
+                                let _ = p.send_event(Msg::Progress(x));
+                            })
+                        });
+                        lock.store(false, Ordering::Relaxed);
+                        let mut x = result.unwrap_or_else(
+                            |error| json!({"status":"YouTube 下载失败","log":error,"ready":true}),
+                        );
                         x["platform"] = json!("youtube");
-                        let _ = p.send_event(Msg::Progress(x));
+                        x["busy"] = json!(false);
+                        let _ = p.send_event(Msg::DownloadFinished(x));
                     });
-                    lock.store(false, Ordering::Relaxed);
-                    let mut x = result.unwrap_or_else(
-                        |error| json!({"status":"YouTube 下载失败","log":error,"ready":true}),
-                    );
-                    x["platform"] = json!("youtube");
-                    x["busy"] = json!(false);
-                    let _ = p.send_event(Msg::DownloadFinished(x));
                 });
             }
             _ => {}
@@ -741,22 +752,30 @@ impl YouTube {
                 downloads,
             );
         }
-        if self.login_open && Instant::now() >= self.next_login {
+        if self.login_open
+            && Instant::now() >= self.next_login
+            && !self.login_pending.swap(true, Ordering::Relaxed)
+        {
             self.next_login = Instant::now() + Duration::from_secs(5);
-            let state = match self.browser.cookies_for_url("https://www.youtube.com/") {
-                Ok(c) => {
-                    if c.iter().any(|c| {
-                        ["SID", "SAPISID", "__Secure-3PAPISID"].contains(&c.name())
-                            && !c.value().is_empty()
-                    }) {
-                        "已保存 YouTube 登录状态；需要时勾选使用登录状态"
-                    } else {
-                        "未检测到 YouTube 登录，公开视频可先直接解析"
+            let p = proxy.clone();
+            let pending = self.login_pending.clone();
+            browser_cookies::read(&self.browser, "https://www.youtube.com/", move |result| {
+                let state = match result {
+                    Ok(c) => {
+                        if c.iter().any(|c| {
+                            ["SID", "SAPISID", "__Secure-3PAPISID"].contains(&c.name.as_str())
+                                && !c.value.is_empty()
+                        }) {
+                            "已保存 YouTube 登录状态；需要时勾选使用登录状态"
+                        } else {
+                            "未检测到 YouTube 登录，公开视频可先直接解析"
+                        }
                     }
-                }
-                Err(_) => "登录状态暂无法确认，可在浏览器查看",
-            };
-            let _ = ui.evaluate_script(&format!("window.setLogin({},'youtube');", json!(state)));
+                    Err(_) => "登录状态暂无法确认，可在浏览器查看",
+                };
+                pending.store(false, Ordering::Relaxed);
+                let _ = p.send_event(Msg::LoginStatus("youtube", state));
+            });
         }
     }
 }

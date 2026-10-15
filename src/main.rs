@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod browser_cookies;
 mod douyin;
 mod youtube;
 use serde_json::{json, Value};
@@ -40,6 +41,7 @@ enum Msg {
     PopupClosed,
     PopupTest(bool),
     Loaded(String, bool),
+    LoginStatus(&'static str, &'static str),
 }
 fn host_allowed(s: &str, domain: &str) -> bool {
     url::Url::parse(s)
@@ -173,7 +175,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let events = EventLoopBuilder::<Msg>::with_user_event().build();
     let proxy = events.create_proxy();
     let window = WindowBuilder::new()
-        .with_title("视频下载助手 v0.3.0 试用版")
+        .with_title("视频下载助手 v0.3.1 试用版")
         .with_visible(
             !media_smoke
                 && parse_test.is_none()
@@ -282,7 +284,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
  *flow=ControlFlow::WaitUntil(Instant::now()+Duration::from_millis(300));
  let display=|x:Value|{let _=ui.evaluate_script(&format!("window.update({});",x));};
  match event{
- Event::WindowEvent{window_id,event:WindowEvent::CloseRequested,..}=>{if window_id==window.id(){*flow=ControlFlow::Exit}else if window_id==yt.window.id(){yt.stop();yt.window.set_visible(false)}else if window_id==dy.window.id(){dy.stop();dy.window.set_visible(false)}else if window_id==popup_window.id(){popup_window.set_visible(false)}else{stop_preview(&browser,None);browser_window.set_visible(false)}},
+ Event::WindowEvent{window_id,event:WindowEvent::CloseRequested,..}=>{if window_id==window.id(){*flow=ControlFlow::Exit}else if window_id==yt.window.id(){yt.close_browser()}else if window_id==dy.window.id(){dy.close_browser()}else if window_id==popup_window.id(){popup_window.set_visible(false)}else{login_open=false;login_probe=None;stop_preview(&browser,None);browser_window.set_visible(false)}},
  Event::UserEvent(Msg::Ui(v)) if v["platform"]=="youtube"=>{if v["action"]=="platform-selected"{dy.stop();stop_preview(&browser,popup_view.borrow().as_ref());}if parse_deadline.is_none()&&!dy.parsing(){yt.ui(&v,&ui,&proxy,&busy,&downloads);}},
  Event::UserEvent(Msg::YouTubeParsed(request,result))=>yt.parsed(request,result,&ui,&proxy,&busy,&downloads),
  Event::UserEvent(Msg::YouTubeOpen(url))=>{let _=yt.browser.load_url(&url);yt.window.set_visible(true);yt.window.set_focus();},
@@ -312,6 +314,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
      selected=Some(v);
    }else{parse_deadline=None;pending=None;display(json!({"status":"解析结果不完整","log":"未取得有效音视频地址，请重试。","busy":false}));if parse_test.is_some(){let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("parse-smoke-test.json"),"{\"error\":\"invalid media URL\"}");*flow=ControlFlow::Exit;}}
  }},
+ Event::UserEvent(Msg::LoginStatus(platform,state))=>{let _=ui.evaluate_script(&format!("window.setLogin({},{});",json!(state),json!(platform)));},
  Event::UserEvent(Msg::Progress(x))=>display(x),
  Event::UserEvent(Msg::DownloadFinished(mut x))=>{x["busy"]=json!(false);if x["platform"]=="youtube"{yt.finished(&x);}else if x["platform"]=="douyin"{dy.finished(&x);}else{stop_preview(&browser,popup_view.borrow().as_ref());}display(x);},
  Event::UserEvent(Msg::MediaStarted(ok))=>{if !ok{let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("media-smoke-test.txt"),"FAIL: test media did not play");*flow=ControlFlow::Exit;}else{let _=proxy.send_event(Msg::DownloadFinished(json!({"status":"下载完成 ✓","ready":true})));}},

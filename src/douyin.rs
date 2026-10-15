@@ -89,6 +89,7 @@ pub struct Douyin {
     next_extract: Instant,
     next_login: Instant,
     login_open: bool,
+    login_pending: Arc<AtomicBool>,
     pub finished_test: bool,
     test_url: Option<String>,
     test_download: bool,
@@ -138,6 +139,7 @@ impl Douyin {
             next_extract: Instant::now(),
             next_login: Instant::now(),
             login_open: false,
+            login_pending: Arc::new(AtomicBool::new(false)),
             finished_test: false,
             test_url,
             test_download: std::env::args().any(|a| a == "--download-test"),
@@ -151,6 +153,11 @@ impl Douyin {
     }
     pub fn stop(&self) {
         stop_preview(&self.browser, None);
+    }
+    pub fn close_browser(&mut self) {
+        self.login_open = false;
+        self.stop();
+        self.window.set_visible(false);
     }
     pub fn ui(
         &mut self,
@@ -220,15 +227,7 @@ impl Douyin {
                         self.fail(ui, "媒体地址无效，请重新解析。");
                         return;
                     }
-                    let cookies = self
-                        .browser
-                        .cookies_for_url(raw)
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter(|c| !c.value().is_empty())
-                        .map(|c| format!("{}={}", c.name(), c.value()))
-                        .collect::<Vec<_>>()
-                        .join("; ");
+                    let cookie_url = raw.to_owned();
                     busy.store(true, Ordering::Relaxed);
                     let p = proxy.clone();
                     let lock = busy.clone();
@@ -238,10 +237,22 @@ impl Douyin {
                         json!({"status":"开始下载抖音视频","busy":true,"ready":false}),
                     );
                     self.stop();
-                    std::thread::spawn(move || {
-                        let result = download_video(&data, &format, &cookies, &dir, |mut x| {
-                            x["platform"] = json!("douyin");
-                            let _ = p.send_event(Msg::Progress(x));
+                    browser_cookies::read(&self.browser, &cookie_url, move |cookies| {
+                        let result = cookies.and_then(|cookies| {
+                            let cookies = cookies
+                                .into_iter()
+                                .filter(|c| {
+                                    !c.value.is_empty()
+                                        && !c.name.contains(['\r', '\n', ';'])
+                                        && !c.value.contains(['\r', '\n'])
+                                })
+                                .map(|c| format!("{}={}", c.name, c.value))
+                                .collect::<Vec<_>>()
+                                .join("; ");
+                            download_video(&data, &format, &cookies, &dir, |mut x| {
+                                x["platform"] = json!("douyin");
+                                let _ = p.send_event(Msg::Progress(x));
+                            })
                         });
                         lock.store(false, Ordering::Relaxed);
                         let mut x = match result {
@@ -390,22 +401,30 @@ impl Douyin {
             self.window.set_visible(true);
             self.window.set_focus();
         }
-        if (self.login_open || self.parsing()) && Instant::now() >= self.next_login {
+        if (self.login_open || self.parsing())
+            && Instant::now() >= self.next_login
+            && !self.login_pending.swap(true, Ordering::Relaxed)
+        {
             self.next_login = Instant::now() + Duration::from_secs(5);
-            let state = match self.browser.cookies_for_url("https://www.douyin.com/") {
-                Ok(cookies) => {
-                    if cookies.iter().any(|c| {
-                        ["sessionid", "sessionid_ss", "sid_guard"].contains(&c.name())
-                            && !c.value().is_empty()
-                    }) {
-                        "已保存抖音登录状态；失效时请重新登录"
-                    } else {
-                        "尚未检测到抖音登录，请在浏览器确认"
+            let p = proxy.clone();
+            let pending = self.login_pending.clone();
+            browser_cookies::read(&self.browser, "https://www.douyin.com/", move |result| {
+                let state = match result {
+                    Ok(cookies) => {
+                        if cookies.iter().any(|c| {
+                            ["sessionid", "sessionid_ss", "sid_guard"].contains(&c.name.as_str())
+                                && !c.value.is_empty()
+                        }) {
+                            "已保存抖音登录状态；失效时请重新登录"
+                        } else {
+                            "尚未检测到抖音登录，请在浏览器确认"
+                        }
                     }
-                }
-                Err(_) => "暂无法确认抖音登录状态，可在浏览器查看",
-            };
-            let _ = ui.evaluate_script(&format!("window.setLogin({},'douyin');", json!(state)));
+                    Err(_) => "暂无法确认抖音登录状态，可在浏览器查看",
+                };
+                pending.store(false, Ordering::Relaxed);
+                let _ = p.send_event(Msg::LoginStatus("douyin", state));
+            });
         }
     }
 }
