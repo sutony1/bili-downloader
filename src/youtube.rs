@@ -168,12 +168,15 @@ fn sanitized_error(raw: &str) -> String {
 fn run_tool(
     mut c: Command,
     timeout: Duration,
+    cancel: Option<&AtomicBool>,
     mut line: impl FnMut(&str),
 ) -> Result<String, String> {
+    if let Some(cancel) = cancel {
+        download_process::check(cancel)?;
+    }
     c.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = c.spawn().map_err(|_| {
-        "未找到 yt-dlp.exe。请双击程序旁的“准备YouTube组件.cmd”，完成后重试。".to_owned()
-    })?;
+    let mut child = download_process::ManagedChild::spawn(&mut c)
+        .map_err(|e| format!("无法启动下载组件：{e}。请确认已准备 yt-dlp、Deno 和 FFmpeg。"))?;
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -203,6 +206,13 @@ fn run_tool(
     let start = Instant::now();
     let mut text = String::new();
     let status = loop {
+        if let Some(cancel) = cancel {
+            if let Err(error) = child.check_cancel(cancel) {
+                let _ = reader.join();
+                let _ = errors.join();
+                return Err(error);
+            }
+        }
         while let Ok(s) = rx.try_recv() {
             line(&s);
             if text.len() < 25 * 1024 * 1024 {
@@ -214,8 +224,7 @@ fn run_tool(
             break status;
         }
         if start.elapsed() > timeout {
-            let _ = child.kill();
-            let _ = child.wait();
+            child.terminate();
             let _ = reader.join();
             let _ = errors.join();
             return Err(
@@ -313,18 +322,61 @@ fn parse(raw: &str, cookies: &str) -> Result<Value, String> {
     let job = Job::new(cookies)?;
     let mut c = base_command(&url, &job)?;
     c.args(["--skip-download", "--dump-single-json", "--no-progress"]);
-    let text = run_tool(c, Duration::from_secs(110), |_| {})?;
+    let text = run_tool(c, Duration::from_secs(110), None, |_| {})?;
     let data: Value =
         serde_json::from_str(&text).map_err(|_| "视频信息解析失败，请更新 yt-dlp 后重试。")?;
     normalize(&data, &id)
+}
+// Keep subprocess arguments ASCII-only; Windows tools may decode argv using
+// a legacy code page even when their stdout is explicitly UTF-8.
+const PROGRESS_TEMPLATE: &str = "download:__YTPROGRESS__%(progress.downloaded_bytes|0)s|%(progress.total_bytes,progress.total_bytes_estimate|0)s|%(progress.speed|0)s|%(progress.eta|-1)s";
+fn progress_status(raw: &str) -> Option<String> {
+    let fields: Vec<f64> = raw
+        .split('|')
+        .map(|s| s.trim().parse())
+        .collect::<Result<_, _>>()
+        .ok()?;
+    if fields.len() != 4 {
+        return None;
+    }
+    let number = |index: usize| Some(fields[index]).filter(|n| n.is_finite() && *n >= 0.0);
+    let downloaded = number(0)?;
+    let total = number(1).filter(|n| *n > 0.0);
+    let size = if let Some(total) = total {
+        format!(
+            "{:.1}% · {:.1} / {:.1} MB",
+            (100.0 * downloaded / total).clamp(0.0, 100.0),
+            downloaded / 1048576.0,
+            total / 1048576.0
+        )
+    } else {
+        format!("已下载 {:.1} MB", downloaded / 1048576.0)
+    };
+    let speed = match number(2).filter(|n| *n > 0.0) {
+        Some(n) if n >= 1048576.0 => format!("{:.2} MB/s", n / 1048576.0),
+        Some(n) => format!("{:.1} KB/s", n / 1024.0),
+        None => "正在估算".into(),
+    };
+    let eta = match number(3) {
+        Some(n) if n < 31536000.0 => {
+            let n = n as u64;
+            format!("{:02}:{:02}:{:02}", n / 3600, n / 60 % 60, n % 60)
+        }
+        _ => "正在估算".into(),
+    };
+    Some(format!(
+        "正在下载 YouTube · {size} · 速度 {speed} · 预计剩余 {eta}"
+    ))
 }
 fn download_video(
     data: &Value,
     format: &Value,
     cookies: &str,
     dir: &PathBuf,
+    cancel: &AtomicBool,
     report: impl Fn(Value),
 ) -> Result<Value, String> {
+    download_process::check(cancel)?;
     let id = data["id"].as_str().ok_or("缺少视频编号")?;
     let key = format["id"]
         .as_str()
@@ -373,19 +425,42 @@ fn download_video(
     } else {
         format!("{key}+bestaudio[ext=m4a]/{key}+bestaudio")
     };
-    c.args(["-f",&selector,"--merge-output-format",ext,"--no-overwrites","--newline","--progress","--progress-delta","1","--progress-template","download:__YTPROGRESS__%(progress._percent_str)s | %(progress._speed_str)s | 剩余 %(progress._eta_str)s","--print","after_move:__YTOUT__%(filepath)j","--no-simulate","-o"]).arg(&out);
+    c.args([
+        "-f",
+        &selector,
+        "--merge-output-format",
+        ext,
+        "--no-overwrites",
+        "--newline",
+        "--progress",
+        "--progress-delta",
+        "1",
+        "--progress-template",
+        PROGRESS_TEMPLATE,
+        "--print",
+        "after_move:__YTOUT__%(filepath)j",
+        "--no-simulate",
+        "-o",
+    ])
+    .arg(&out);
+    if std::env::args().any(|a| a == "--slow-download-test") {
+        c.args(["--limit-rate", "32K"]);
+    }
     let ffmpeg = tool("ffmpeg");
     if PathBuf::from(&ffmpeg).exists() {
         c.arg("--ffmpeg-location").arg(&ffmpeg);
     }
     let mut final_file = None;
-    run_tool(c, Duration::from_secs(3600), |line| {
+    run_tool(c, Duration::from_secs(3600), Some(cancel), |line| {
         if let Some(s) = line.strip_prefix("__YTPROGRESS__") {
-            report(json!({"status":format!("正在下载 YouTube · {}",s.trim()),"busy":true}));
+            if let Some(status) = progress_status(s) {
+                report(json!({"status":status,"busy":true}));
+            }
         } else if let Some(s) = line.strip_prefix("__YTOUT__") {
             final_file = serde_json::from_str::<String>(s).ok().map(PathBuf::from);
         }
     })?;
+    download_process::check(cancel)?;
     let file = final_file.ok_or("下载进程未返回保存文件，请查看下载文件夹。")?;
     if file != out {
         return Err("下载结果的文件路径与预期不一致，未继续处理。".into());
@@ -429,6 +504,7 @@ fn download_video(
         return Err("保存文件的分辨率与所选画质不一致，请重新解析。".into());
     }
     let size = std::fs::metadata(&file).map_err(|e| e.to_string())?.len();
+    download_process::check(cancel)?;
     Ok(
         json!({"status":"下载完成 ✓","ready":true,"info":format!("{}×{} · {duration:.1}秒 · {:.1}MB",video["width"],video["height"],size as f64/1048576.),"log":format!("保存位置：{}\n所选分辨率、音视频流和完整时长核验通过；未重新压缩。",file.display())}),
     )
@@ -443,6 +519,7 @@ pub struct YouTube {
     next_login: Instant,
     login_open: bool,
     login_pending: Arc<AtomicBool>,
+    download_cancel: Option<Arc<AtomicBool>>,
     use_login: bool,
     test_url: Option<String>,
     test_started: bool,
@@ -493,6 +570,7 @@ impl YouTube {
             next_login: Instant::now(),
             login_open: false,
             login_pending: Arc::new(AtomicBool::new(false)),
+            download_cancel: None,
             use_login: false,
             test_url,
             test_started: false,
@@ -508,6 +586,14 @@ impl YouTube {
         self.login_open = false;
         self.stop();
         self.window.set_visible(false);
+    }
+    pub fn cancel_download(&self) -> bool {
+        if let Some(cancel) = &self.download_cancel {
+            cancel.store(true, Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
     }
     fn with_cookies(
         &self,
@@ -634,22 +720,22 @@ impl YouTube {
                 let lock = busy.clone();
                 busy.store(true, Ordering::Relaxed);
                 self.stop();
+                let cancel = Arc::new(AtomicBool::new(false));
+                self.download_cancel = Some(cancel.clone());
                 show(
                     ui,
-                    json!({"status":"开始下载 YouTube 视频","busy":true,"ready":false}),
+                    json!({"status":"开始下载 YouTube 视频","busy":true,"ready":false,"downloading":true,"stopping":false}),
                 );
                 self.with_cookies(self.use_login, move |cookies| {
                     std::thread::spawn(move || {
                         let result = cookies.and_then(|cookies| {
-                            download_video(&data, &f, &cookies, &dir, |mut x| {
+                            download_video(&data, &f, &cookies, &dir, &cancel, |mut x| {
                                 x["platform"] = json!("youtube");
                                 let _ = p.send_event(Msg::Progress(x));
                             })
                         });
                         lock.store(false, Ordering::Relaxed);
-                        let mut x = result.unwrap_or_else(
-                            |error| json!({"status":"YouTube 下载失败","log":error,"ready":true}),
-                        );
+                        let mut x = result.unwrap_or_else(download_process::result);
                         x["platform"] = json!("youtube");
                         x["busy"] = json!(false);
                         let _ = p.send_event(Msg::DownloadFinished(x));
@@ -725,6 +811,7 @@ impl YouTube {
         }
     }
     pub fn finished(&mut self, x: &Value) {
+        self.download_cancel = None;
         self.stop();
         if self.test_started && self.test_download {
             self.write_test(x.clone());
@@ -783,6 +870,20 @@ impl YouTube {
 mod tests {
     use super::*;
     #[test]
+    fn progress_uses_numeric_fields_with_unknown_size_and_eta() {
+        assert!(PROGRESS_TEMPLATE.is_ascii());
+        let s = progress_status("1048576|10485760|184320|12267").unwrap();
+        assert_eq!(
+            s,
+            "正在下载 YouTube · 10.0% · 1.0 / 10.0 MB · 速度 180.0 KB/s · 预计剩余 03:24:27"
+        );
+        assert!(progress_status("5|0|0|-1")
+            .unwrap()
+            .contains("预计剩余 正在估算"));
+        assert!(progress_status("garbled text").is_none());
+        assert!(progress_status("-1|0|0|-1").is_none());
+    }
+    #[test]
     fn urls() {
         for u in [
             "https://www.youtube.com/watch?v=BaW_jenozKc&list=example",
@@ -813,8 +914,46 @@ mod tests {
     fn progress_reader_survives_non_utf8() {
         let mut c = command("powershell.exe");
         c.args(["-NoProfile","-Command","$s=[Console]::OpenStandardOutput();$s.WriteByte(255);$s.WriteByte(10);[Console]::WriteLine('OK')"]);
-        let output = run_tool(c, Duration::from_secs(15), |_| {}).unwrap();
+        let output = run_tool(c, Duration::from_secs(15), None, |_| {}).unwrap();
         assert!(output.contains("OK"));
+    }
+    #[test]
+    fn stop_terminates_parent_and_child_processes_without_waiting_for_network() {
+        use windows::Win32::{
+            Foundation::CloseHandle,
+            System::Threading::{
+                GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            },
+        };
+        let cancel = AtomicBool::new(false);
+        let mut pid = None;
+        let mut c = command("powershell.exe");
+        c.args(["-NoProfile","-Command","$p=Start-Process -FilePath $env:ComSpec -ArgumentList '/c ping -n 60 127.0.0.1' -WindowStyle Hidden -PassThru;[Console]::WriteLine('CHILD='+$p.Id);[Console]::Out.Flush();Start-Sleep -Seconds 60"]);
+        let start = Instant::now();
+        let error = run_tool(c, Duration::from_secs(15), Some(&cancel), |line| {
+            if let Some(value) = line.strip_prefix("CHILD=") {
+                pid = value.parse::<u32>().ok();
+                cancel.store(true, Ordering::Relaxed);
+            }
+        })
+        .unwrap_err();
+        assert_eq!(error, download_process::STOPPED);
+        assert!(start.elapsed() < Duration::from_secs(10));
+        let pid = pid.expect("test subprocess started");
+        unsafe {
+            if let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+                let mut exit = 0;
+                GetExitCodeProcess(handle, &mut exit).unwrap();
+                let _ = CloseHandle(handle);
+                assert_ne!(exit, 259, "descendant process must be terminated");
+            }
+        }
+        let mut c = command("program-that-does-not-exist.exe");
+        c.arg("unused");
+        assert_eq!(
+            run_tool(c, Duration::from_secs(1), Some(&cancel), |_| {}).unwrap_err(),
+            download_process::STOPPED
+        );
     }
     #[test]
     fn private_job_cleans_cookie_file() {

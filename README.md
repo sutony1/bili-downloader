@@ -1,12 +1,12 @@
 # 视频下载助手：B站 / 抖音 / YouTube
 
-用 Rust 编写的 Windows 桌面视频下载工具，当前分支为 **v0.3.1 试用版**。提供“B站下载”“抖音下载”“YouTube 下载”三个选项卡，分别保存网址、解析结果和本机网页登录状态。B站继续下载音视频并合并成 MP4；抖音和 YouTube 支持单条视频、可用画质选择和文件核验。
+用 Rust 编写的 Windows 桌面视频下载工具，当前分支为 **v0.3.2 试用版**。提供“B站下载”“抖音下载”“YouTube 下载”三个选项卡，分别保存网址、解析结果和本机网页登录状态。B站继续下载音视频并合并成 MP4；抖音和 YouTube 支持单条视频、可用画质选择和文件核验。
 
 新增抖音功能前的稳定版已保存为 [pre-douyin-v0.1.6 回退标签](https://github.com/sutony1/bili-downloader/tree/pre-douyin-v0.1.6)。仍需原版时，可下载 [v0.1.6 稳定版](https://github.com/sutony1/bili-downloader/releases/tag/v0.1.6)。
 
 ## 在另一台电脑直接运行
 
-1. 已发布的 [v0.3.0 试用版](https://github.com/sutony1/bili-downloader/releases/tag/v0.3.0) 提供 Windows x64 ZIP；v0.3.1 窗口拖动修复版当前先提供本地程序测试。
+1. 已发布的 [v0.3.0 试用版](https://github.com/sutony1/bili-downloader/releases/tag/v0.3.0) 提供 Windows x64 ZIP；v0.3.2 修复版当前先提供本地程序测试。
 2. 按下面的“准备 WebView2”步骤安装或确认已有浏览器运行组件。
 3. 按下面的“准备 FFmpeg 和 FFprobe”步骤，将两个 EXE 放在下载助手旁边。
 4. 双击 `bili-downloader.exe`，选择对应平台的选项卡。需要登录时点击“登录 / 显示浏览器”，在对应的官方网页操作。B站支持扫码或 QQ 登录；抖音按网页提示扫码或手机号登录。**各平台登录独立，换电脑需要首次登录。YouTube 公开视频通常无需登录；需要账号时才勾选使用登录状态。**
@@ -117,7 +117,7 @@ curl.exe --version
 ```powershell
 git clone https://github.com/sutony1/bili-downloader.git
 cd bili-downloader
-git checkout codex/window-drag-v0.3.1
+git checkout codex/progress-stop-v0.3.2
 cargo build --release --locked
 .\target\release\bili-downloader.exe
 ```
@@ -180,11 +180,13 @@ node tests/douyin.test.cjs
 
 音视频分别下载，FFmpeg 以 `-c copy` 合并，FFprobe 核验音视频流和时长。支持 B站 `bilivideo.com`、`bilivideo.cn` 资源地址，并优先选取常规 CDN 备用地址。
 
-当前支持 B站单P视频、抖音普通单条短视频、YouTube 单条视频和单个下载任务，尚无批量队列、取消、断点续传或安装包。网站接口和验证机制变化可能影响解析。解析或下载期间暂时锁定选项卡，避免任务与当前界面错位；各平台的结果分别保存。
+当前支持 B站单P视频、抖音普通单条短视频、YouTube 单条视频和单个下载任务。下载时可以点击“停止下载”，终止当前任务及它启动的下载、合并进程。按钮显示“正在停止…”时等待进程退出；随后可以重新选择画质、重新下载或清空网址。未完成的临时文件保留在下载文件夹。本版尚无暂停/继续按钮、批量队列或安装包。网站接口和验证机制变化可能影响解析。解析或下载期间暂时锁定选项卡，避免任务与当前界面错位；各平台的结果分别保存。
 
 登录状态保存在本机 `%LOCALAPPDATA%\BiliDownloader\BrowserProfile`，与 Edge/Codex 浏览器分别保存。程序通过 B站及 QQ 官方网页完成登录；仓库和发行包不包含浏览器配置、Cookie、测试下载内容或临时播放链接。
 
 ## 版本记录
+
+- v0.3.2（试用）：YouTube 进度改用数字字段，在程序内生成中文百分比、文件大小、速度和预计剩余时间；三个平台增加“停止下载”，终止当前下载进程树后恢复画质选择和网址输入。
 
 - v0.3.1（试用）：抖音、YouTube 的登录状态检测及下载前 Cookie 读取改用 WebView2 异步回调；界面线程不再同步等待或运行嵌套消息循环。读取超时会显示错误；关闭登录浏览器后停止定期登录检测。针对解析或下载后拖动窗口卡死的报告作此修复，仍需用户验证原先的复现步骤。
 

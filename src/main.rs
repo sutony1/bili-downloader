@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod browser_cookies;
 mod douyin;
+mod download_process;
 mod youtube;
 use serde_json::{json, Value};
 use std::os::windows::process::CommandExt;
@@ -162,7 +163,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let data: Value = serde_json::from_slice(&std::fs::read(file)?)?;
         let dir = std::env::current_dir()?.join("verification");
         std::fs::create_dir_all(&dir)?;
-        let result = download(&data, &dir, |_| {}).map_err(std::io::Error::other)?;
+        let result = download(&data, &dir, &AtomicBool::new(false), |_| {})
+            .map_err(std::io::Error::other)?;
         std::fs::write(dir.join("result.json"), serde_json::to_vec_pretty(&result)?)?;
         return Ok(());
     }
@@ -175,7 +177,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let events = EventLoopBuilder::<Msg>::with_user_event().build();
     let proxy = events.create_proxy();
     let window = WindowBuilder::new()
-        .with_title("视频下载助手 v0.3.1 试用版")
+        .with_title("视频下载助手 v0.3.2 试用版")
         .with_visible(
             !media_smoke
                 && parse_test.is_none()
@@ -280,11 +282,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut oauth_checked = false;
     let mut media_injected = false;
     let mut media_phase = 0u8;
+    let mut bili_cancel: Option<Arc<AtomicBool>> = None;
+    let mut stopping = false;
     events.run(move|event,_,flow|{
  *flow=ControlFlow::WaitUntil(Instant::now()+Duration::from_millis(300));
  let display=|x:Value|{let _=ui.evaluate_script(&format!("window.update({});",x));};
  match event{
  Event::WindowEvent{window_id,event:WindowEvent::CloseRequested,..}=>{if window_id==window.id(){*flow=ControlFlow::Exit}else if window_id==yt.window.id(){yt.close_browser()}else if window_id==dy.window.id(){dy.close_browser()}else if window_id==popup_window.id(){popup_window.set_visible(false)}else{login_open=false;login_probe=None;stop_preview(&browser,None);browser_window.set_visible(false)}},
+ Event::UserEvent(Msg::Ui(v)) if v["action"]=="stop"=>{let requested=match v["platform"].as_str(){Some("youtube")=>yt.cancel_download(),Some("douyin")=>dy.cancel_download(),_=>{if let Some(cancel)=&bili_cancel{cancel.store(true,Ordering::Relaxed);true}else{false}}};if requested{stopping=true;display(json!({"platform":v["platform"],"status":"正在停止下载…","stopping":true}));}},
  Event::UserEvent(Msg::Ui(v)) if v["platform"]=="youtube"=>{if v["action"]=="platform-selected"{dy.stop();stop_preview(&browser,popup_view.borrow().as_ref());}if parse_deadline.is_none()&&!dy.parsing(){yt.ui(&v,&ui,&proxy,&busy,&downloads);}},
  Event::UserEvent(Msg::YouTubeParsed(request,result))=>yt.parsed(request,result,&ui,&proxy,&busy,&downloads),
  Event::UserEvent(Msg::YouTubeOpen(url))=>{let _=yt.browser.load_url(&url);yt.window.set_visible(true);yt.window.set_focus();},
@@ -292,13 +297,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
  Event::UserEvent(Msg::DouyinCapture(v))=>dy.captured(v,&ui,&proxy,&busy,&downloads),
  Event::UserEvent(Msg::DouyinOpen(u))=>{let _=dy.browser.load_url(&u);dy.window.set_visible(true);dy.window.set_focus();},
  Event::UserEvent(Msg::Ui(v))=>match v["action"].as_str().unwrap_or(""){
- "ui-ready"=>{if let Some(ref bv)=parse_test{let _=proxy.send_event(Msg::Ui(json!({"action":"parse","url":bv})));}if smoke{let valid=v["buttons"].as_u64()==Some(8)&&v["tabs"].as_u64()==Some(3)&&v["input"].as_bool()==Some(true)&&v["visible"].as_bool()==Some(true)&&v["update"].as_bool()==Some(true);let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("smoke-test.txt"),if valid{"PASS: HTML rendered, three platform tabs, five action buttons and URL input visible, JavaScript and IPC ready"}else{"FAIL: HTML readiness check failed"});*flow=ControlFlow::Exit;}},
+ "ui-ready"=>{if let Some(ref bv)=parse_test{let _=proxy.send_event(Msg::Ui(json!({"action":"parse","url":bv})));}if smoke{let valid=v["buttons"].as_u64()==Some(9)&&v["tabs"].as_u64()==Some(3)&&v["input"].as_bool()==Some(true)&&v["visible"].as_bool()==Some(true)&&v["update"].as_bool()==Some(true);let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("smoke-test.txt"),if valid{"PASS: HTML rendered, three platform tabs, six action buttons and URL input visible, JavaScript and IPC ready"}else{"FAIL: HTML readiness check failed"});*flow=ControlFlow::Exit;}},
  "login"=>{login_open=true;let target=if current_url.is_empty(){"https://www.bilibili.com/"}else{&current_url};let _=browser.load_url(target);login_probe=Some(Instant::now()+Duration::from_secs(3));browser_window.set_visible(true);browser_window.set_focus();},
  "platform-selected"=>{dy.stop();yt.stop();},
  "clear" if !busy.load(Ordering::Relaxed)&&parse_deadline.is_none()=>{selected=None;stop_preview(&browser,None);},
  "folder"=>{let _=command("explorer.exe").arg(&downloads).spawn();},
  "parse" if !busy.load(Ordering::Relaxed)&&!dy.parsing()&&parse_deadline.is_none()=>{if let Some(bv)=bvid(v["url"].as_str().unwrap_or("")){selected=None;wanted=bv;parse_request+=1;parse_attempts=0;parse_deadline=Some(Instant::now()+Duration::from_secs(35));let u=format!("https://www.bilibili.com/video/{wanted}/");current_url=u.clone();if delayed_test{delayed_navigation=Some((Instant::now()+Duration::from_secs(6),u));}else{let _=browser.load_url(&u);}pending=Some(Instant::now()+Duration::from_secs(1));display(json!({"status":"正在解析…","info":"正在加载视频页面","log":"正在等待页面就绪；若网络请求失败，会显示具体原因。","ready":false,"busy":true}));}else{display(json!({"status":"请输入有效的 bilibili.com 视频网址或BV编号"}));}},
- "download" if !busy.load(Ordering::Relaxed)=>{if let Some(data)=selected.clone(){busy.store(true,Ordering::Relaxed);let p=proxy.clone();let dir=downloads.clone();let lock=busy.clone();display(json!({"status":"开始下载","busy":true}));std::thread::spawn(move||{let result=download(&data,&dir,|x|{let _=p.send_event(Msg::Progress(x));});lock.store(false,Ordering::Relaxed);let x=match result{Ok(x)=>x,Err(e)=>json!({"status":"下载失败","log":e,"ready":true})};let _=p.send_event(Msg::DownloadFinished(x));});}},_=>{}},
+ "download" if !busy.load(Ordering::Relaxed)=>{if let Some(data)=selected.clone(){busy.store(true,Ordering::Relaxed);let p=proxy.clone();let dir=downloads.clone();let lock=busy.clone();let cancel=Arc::new(AtomicBool::new(false));bili_cancel=Some(cancel.clone());display(json!({"status":"开始下载","busy":true,"downloading":true,"stopping":false}));std::thread::spawn(move||{let result=download(&data,&dir,&cancel,|x|{let _=p.send_event(Msg::Progress(x));});lock.store(false,Ordering::Relaxed);let x=match result{Ok(x)=>x,Err(e)=>download_process::result(e)};let _=p.send_event(Msg::DownloadFinished(x));});}},_=>{}},
  Event::UserEvent(Msg::Capture(v))=>{
  if v["action"]=="auth-return"{let _=proxy.send_event(Msg::PopupClosed);}
  else if v["action"]=="auth-status"{let state=v["state"].as_str().unwrap_or("error");if login_state_test&&(!return_smoke||oauth_checked){let _=std::fs::write(std::env::current_exe().unwrap().with_file_name(if return_smoke{"auth-return-test.txt"}else{"login-state-test.txt"}),format!("state={} blank={}",state,v["blank"]));*flow=ControlFlow::Exit;}let _=ui.evaluate_script(&format!("window.setLogin({});",json!(match state{"logged-in"=>"已登录B站","logged-out"=>"尚未登录B站",_=>"登录状态检测失败，可稍后重试"})));if state=="logged-in"&&v["blank"].as_bool()==Some(true){let target=if current_url.is_empty(){"https://www.bilibili.com/"}else{&current_url};let _=browser.load_url(target);}if login_open{login_probe=Some(Instant::now()+Duration::from_secs(5));}}
@@ -315,8 +320,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
    }else{parse_deadline=None;pending=None;display(json!({"status":"解析结果不完整","log":"未取得有效音视频地址，请重试。","busy":false}));if parse_test.is_some(){let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("parse-smoke-test.json"),"{\"error\":\"invalid media URL\"}");*flow=ControlFlow::Exit;}}
  }},
  Event::UserEvent(Msg::LoginStatus(platform,state))=>{let _=ui.evaluate_script(&format!("window.setLogin({},{});",json!(state),json!(platform)));},
- Event::UserEvent(Msg::Progress(x))=>display(x),
- Event::UserEvent(Msg::DownloadFinished(mut x))=>{x["busy"]=json!(false);if x["platform"]=="youtube"{yt.finished(&x);}else if x["platform"]=="douyin"{dy.finished(&x);}else{stop_preview(&browser,popup_view.borrow().as_ref());}display(x);},
+ Event::UserEvent(Msg::Progress(x))=>{if !stopping{display(x);}},
+ Event::UserEvent(Msg::DownloadFinished(mut x))=>{stopping=false;x["busy"]=json!(false);x["downloading"]=json!(false);x["stopping"]=json!(false);if x["platform"]=="youtube"{yt.finished(&x);}else if x["platform"]=="douyin"{dy.finished(&x);}else{bili_cancel=None;stop_preview(&browser,popup_view.borrow().as_ref());}display(x);},
  Event::UserEvent(Msg::MediaStarted(ok))=>{if !ok{let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("media-smoke-test.txt"),"FAIL: test media did not play");*flow=ControlFlow::Exit;}else{let _=proxy.send_event(Msg::DownloadFinished(json!({"status":"下载完成 ✓","ready":true})));}},
  Event::UserEvent(Msg::MediaStopped(paused))=>{let muted=browser_is_muted(&browser).unwrap_or(false);let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("media-smoke-test.txt"),if paused&&muted{"PASS: native browser muted; playing media paused after DownloadFinished"}else{"FAIL: mute or pause check failed"});*flow=ControlFlow::Exit;},
  Event::UserEvent(Msg::PopupClosed)=>{popup_window.set_visible(false);if !oauth_smoke{let target=if current_url.is_empty(){"https://www.bilibili.com/"}else{&current_url};let _=browser.load_url(target);login_probe=Some(Instant::now()+Duration::from_secs(3));browser_window.set_visible(true);browser_window.set_focus();}},
@@ -347,7 +352,12 @@ if smoke&&!inspected&&boot.elapsed()>Duration::from_secs(3){inspected=true;let _
  }
  });
 }
-fn download(data: &Value, dir: &PathBuf, report: impl Fn(Value)) -> Result<Value, String> {
+fn download(
+    data: &Value,
+    dir: &PathBuf,
+    cancel: &AtomicBool,
+    report: impl Fn(Value),
+) -> Result<Value, String> {
     if !command(&tool("ffmpeg"))
         .arg("-version")
         .stdout(Stdio::null())
@@ -386,13 +396,15 @@ fn download(data: &Value, dir: &PathBuf, report: impl Fn(Value)) -> Result<Value
     let temp = dir.join(format!(".bili-{bv}-{stamp}"));
     std::fs::create_dir(&temp).map_err(|e| e.to_string())?;
     for key in ["video", "audio"] {
+        download_process::check(cancel)?;
         let url = data[key].as_str().ok_or("缺少播放地址")?;
         if !media_url_allowed(url) {
             return Err("媒体地址不是B站资源域名".into());
         }
         let file = temp.join(format!("{key}.m4s"));
-        let mut child=command("curl.exe").args(["--fail","--silent","--show-error","--connect-timeout","20","--max-time","1800","--retry","2","--proto","=https","-A","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/137.0.0.0 Safari/537.36","-e",&format!("https://www.bilibili.com/video/{bv}/"),"-o"]).arg(&file).arg(url).stderr(Stdio::null()).spawn().map_err(|e|e.to_string())?;
+        let mut child=download_process::ManagedChild::spawn(command("curl.exe").args(["--fail","--silent","--show-error","--connect-timeout","20","--max-time","1800","--retry","2","--proto","=https","-A","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/137.0.0.0 Safari/537.36","-e",&format!("https://www.bilibili.com/video/{bv}/"),"-o"]).arg(&file).arg(url).stderr(Stdio::null()))?;
         loop {
+            child.check_cancel(cancel)?;
             if let Some(s) = child.try_wait().map_err(|e| e.to_string())? {
                 if !s.success() {
                     return Err("媒体下载失败，可能链接已过期或请求受限；请重新解析后重试".into());
@@ -407,26 +419,32 @@ fn download(data: &Value, dir: &PathBuf, report: impl Fn(Value)) -> Result<Value
         }
     }
     report(json!({"status":"正在合并和核验…","busy":true}));
-    let s = command(&tool("ffmpeg"))
-        .args(["-hide_banner", "-loglevel", "error", "-n", "-i"])
-        .arg(temp.join("video.m4s"))
-        .arg("-i")
-        .arg(temp.join("audio.m4s"))
-        .args([
-            "-map",
-            "0:v:0",
-            "-map",
-            "1:a:0",
-            "-c",
-            "copy",
-            "-movflags",
-            "+faststart",
-        ])
-        .arg(&out)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|e| e.to_string())?;
+    let mut merger = download_process::ManagedChild::spawn(
+        command(&tool("ffmpeg"))
+            .args(["-hide_banner", "-loglevel", "error", "-n", "-i"])
+            .arg(temp.join("video.m4s"))
+            .arg("-i")
+            .arg(temp.join("audio.m4s"))
+            .args([
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-c",
+                "copy",
+                "-movflags",
+                "+faststart",
+            ])
+            .arg(&out)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    )?;
+    let s = merger.wait_cancellable(cancel).map_err(|error| {
+        if out.exists() {
+            let _ = std::fs::rename(&out, out.with_extension("incomplete.mp4"));
+        }
+        error
+    })?;
     if !s.success() {
         return Err("音视频合并失败；临时文件保留在下载文件夹".into());
     }
@@ -462,6 +480,7 @@ fn download(data: &Value, dir: &PathBuf, report: impl Fn(Value)) -> Result<Value
     if (duration - expected).abs() > 3. {
         return Err("文件时长与源视频不一致，请重新解析；暂存文件已保留".into());
     }
+    download_process::check(cancel)?;
     let size = std::fs::metadata(&out).map_err(|e| e.to_string())?.len();
     let _ = std::fs::remove_file(temp.join("video.m4s"));
     let _ = std::fs::remove_file(temp.join("audio.m4s"));

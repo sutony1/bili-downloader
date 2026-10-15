@@ -90,6 +90,7 @@ pub struct Douyin {
     next_login: Instant,
     login_open: bool,
     login_pending: Arc<AtomicBool>,
+    download_cancel: Option<Arc<AtomicBool>>,
     pub finished_test: bool,
     test_url: Option<String>,
     test_download: bool,
@@ -140,6 +141,7 @@ impl Douyin {
             next_login: Instant::now(),
             login_open: false,
             login_pending: Arc::new(AtomicBool::new(false)),
+            download_cancel: None,
             finished_test: false,
             test_url,
             test_download: std::env::args().any(|a| a == "--download-test"),
@@ -158,6 +160,14 @@ impl Douyin {
         self.login_open = false;
         self.stop();
         self.window.set_visible(false);
+    }
+    pub fn cancel_download(&self) -> bool {
+        if let Some(cancel) = &self.download_cancel {
+            cancel.store(true, Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
     }
     pub fn ui(
         &mut self,
@@ -232,9 +242,11 @@ impl Douyin {
                     let p = proxy.clone();
                     let lock = busy.clone();
                     let dir = downloads.clone();
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    self.download_cancel = Some(cancel.clone());
                     display(
                         ui,
-                        json!({"status":"开始下载抖音视频","busy":true,"ready":false}),
+                        json!({"status":"开始下载抖音视频","busy":true,"ready":false,"downloading":true,"stopping":false}),
                     );
                     self.stop();
                     browser_cookies::read(&self.browser, &cookie_url, move |cookies| {
@@ -249,7 +261,7 @@ impl Douyin {
                                 .map(|c| format!("{}={}", c.name, c.value))
                                 .collect::<Vec<_>>()
                                 .join("; ");
-                            download_video(&data, &format, &cookies, &dir, |mut x| {
+                            download_video(&data, &format, &cookies, &dir, &cancel, |mut x| {
                                 x["platform"] = json!("douyin");
                                 let _ = p.send_event(Msg::Progress(x));
                             })
@@ -257,7 +269,7 @@ impl Douyin {
                         lock.store(false, Ordering::Relaxed);
                         let mut x = match result {
                             Ok(x) => x,
-                            Err(e) => json!({"status":"下载失败","log":e,"ready":true}),
+                            Err(e) => download_process::result(e),
                         };
                         x["platform"] = json!("douyin");
                         x["busy"] = json!(false);
@@ -355,6 +367,7 @@ impl Douyin {
         }
     }
     pub fn finished(&mut self, x: &Value) {
+        self.download_cancel = None;
         self.stop();
         if self.test_started && self.test_download {
             self.write_test(x.clone());
@@ -433,8 +446,10 @@ fn download_video(
     format: &Value,
     cookies: &str,
     dir: &PathBuf,
+    cancel: &AtomicBool,
     report: impl Fn(Value),
 ) -> Result<Value, String> {
+    download_process::check(cancel)?;
     let id = data["id"]
         .as_str()
         .filter(|id| valid_id(id))
@@ -501,7 +516,8 @@ fn download_video(
     } else {
         c.args(["--config", "-"]).stdin(Stdio::piped());
     }
-    let mut child = c.spawn().map_err(|e| format!("无法启动下载：{e}"))?;
+    let mut child =
+        download_process::ManagedChild::spawn(&mut c).map_err(|e| format!("无法启动下载：{e}"))?;
     if !cookies.is_empty() {
         use std::io::Write;
         if let Some(mut input) = child.stdin.take() {
@@ -513,6 +529,7 @@ fn download_video(
         }
     }
     loop {
+        child.check_cancel(cancel)?;
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
             if !status.success() {
                 return Err("媒体下载失败；可能链接已过期。请重新解析后重试。".into());
@@ -563,6 +580,7 @@ fn download_video(
         return Err("视频分辨率无效".into());
     }
     let size = std::fs::metadata(&temp).map_err(|e| e.to_string())?.len();
+    download_process::check(cancel)?;
     std::fs::rename(&temp, &out).map_err(|e| e.to_string())?;
     Ok(
         json!({"status":"下载完成 ✓","ready":true,"info":format!("{width}×{height} · {duration:.1}秒 · {:.1}MB",size as f64/1048576.),"log":format!("保存位置：{}\n分辨率、媒体流及完整时长核验通过；直接保存，未重新压缩。{}",out.display(),if streams.iter().any(|s|s["codec_type"]=="audio"){"保留原有声音。"}else{"源文件无音轨。"})}),
