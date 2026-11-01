@@ -2,6 +2,7 @@
 mod browser_cookies;
 mod douyin;
 mod download_process;
+mod transcription;
 mod youtube;
 use serde_json::{json, Value};
 use std::os::windows::process::CommandExt;
@@ -30,6 +31,7 @@ use wry::{
 #[derive(Clone, Debug)]
 enum Msg {
     Ui(Value),
+    Transcription(Value),
     YouTubeParsed(u64, Result<Value, String>),
     YouTubeOpen(String),
     DouyinCapture(Value),
@@ -173,13 +175,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|s| s == "--parse-smoke-test")
         .and_then(|_| std::env::args().nth(2));
     let delayed_test = std::env::args().any(|x| x == "--delayed-navigation");
+    let transcript_test = std::env::args()
+        .position(|x| x == "--transcription-test")
+        .and_then(|i| std::env::args().nth(i + 1));
     let media_smoke = std::env::args().any(|x| x == "--media-smoke-test");
     let events = EventLoopBuilder::<Msg>::with_user_event().build();
     let proxy = events.create_proxy();
     let window = WindowBuilder::new()
-        .with_title("视频下载助手 v0.3.2 试用版")
+        .with_title("视频下载助手 v0.4.0 试用版")
         .with_visible(
             !media_smoke
+                && transcript_test.is_none()
                 && parse_test.is_none()
                 && !std::env::args().any(|a| {
                     a == "--douyin-smoke-test"
@@ -258,6 +264,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let busy = Arc::new(AtomicBool::new(false));
     let mut dy = douyin::Douyin::new(&events)?;
     let mut yt = youtube::YouTube::new(&events)?;
+    let mut transcript = transcription::Transcription::default();
+    let mut transcript_result: Option<Value> = None;
     let downloads = PathBuf::from(std::env::var("USERPROFILE")?).join("Downloads");
     std::fs::create_dir_all(&downloads)?;
     let mut pending: Option<Instant> = None;
@@ -288,7 +296,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
  *flow=ControlFlow::WaitUntil(Instant::now()+Duration::from_millis(300));
  let display=|x:Value|{let _=ui.evaluate_script(&format!("window.update({});",x));};
  match event{
- Event::WindowEvent{window_id,event:WindowEvent::CloseRequested,..}=>{if window_id==window.id(){*flow=ControlFlow::Exit}else if window_id==yt.window.id(){yt.close_browser()}else if window_id==dy.window.id(){dy.close_browser()}else if window_id==popup_window.id(){popup_window.set_visible(false)}else{login_open=false;login_probe=None;stop_preview(&browser,None);browser_window.set_visible(false)}},
+ Event::WindowEvent{window_id,event:WindowEvent::CloseRequested,..}=>{if window_id==window.id(){transcript.stop();*flow=ControlFlow::Exit}else if window_id==yt.window.id(){yt.close_browser()}else if window_id==dy.window.id(){dy.close_browser()}else if window_id==popup_window.id(){popup_window.set_visible(false)}else{login_open=false;login_probe=None;stop_preview(&browser,None);browser_window.set_visible(false)}},
+ Event::UserEvent(Msg::Ui(v)) if v["platform"]=="transcribe"=>{if v["action"]=="platform-selected"{yt.stop();dy.stop();stop_preview(&browser,popup_view.borrow().as_ref());}transcript.ui(&v,&ui,&proxy,&busy);},
+ Event::UserEvent(Msg::Transcription(v))=>{if v["output"].is_string(){transcript_result=Some(v.clone());}let finished=v["busy"]==false;transcript.event(v.clone(),&ui);if finished&&transcript_test.is_some(){let report=json!({"success":transcript_result.as_ref().and_then(|r|r["output"].as_str()).is_some_and(|p|std::path::Path::new(p).is_file()),"result":transcript_result,"final":v});let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("transcription-test.json"),serde_json::to_vec_pretty(&report).unwrap());*flow=ControlFlow::Exit;}},
  Event::UserEvent(Msg::Ui(v)) if v["action"]=="stop"=>{let requested=match v["platform"].as_str(){Some("youtube")=>yt.cancel_download(),Some("douyin")=>dy.cancel_download(),_=>{if let Some(cancel)=&bili_cancel{cancel.store(true,Ordering::Relaxed);true}else{false}}};if requested{stopping=true;display(json!({"platform":v["platform"],"status":"正在停止下载…","stopping":true}));}},
  Event::UserEvent(Msg::Ui(v)) if v["platform"]=="youtube"=>{if v["action"]=="platform-selected"{dy.stop();stop_preview(&browser,popup_view.borrow().as_ref());}if parse_deadline.is_none()&&!dy.parsing(){yt.ui(&v,&ui,&proxy,&busy,&downloads);}},
  Event::UserEvent(Msg::YouTubeParsed(request,result))=>yt.parsed(request,result,&ui,&proxy,&busy,&downloads),
@@ -297,7 +307,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
  Event::UserEvent(Msg::DouyinCapture(v))=>dy.captured(v,&ui,&proxy,&busy,&downloads),
  Event::UserEvent(Msg::DouyinOpen(u))=>{let _=dy.browser.load_url(&u);dy.window.set_visible(true);dy.window.set_focus();},
  Event::UserEvent(Msg::Ui(v))=>match v["action"].as_str().unwrap_or(""){
- "ui-ready"=>{if let Some(ref bv)=parse_test{let _=proxy.send_event(Msg::Ui(json!({"action":"parse","url":bv})));}if smoke{let valid=v["buttons"].as_u64()==Some(9)&&v["tabs"].as_u64()==Some(3)&&v["input"].as_bool()==Some(true)&&v["visible"].as_bool()==Some(true)&&v["update"].as_bool()==Some(true);let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("smoke-test.txt"),if valid{"PASS: HTML rendered, three platform tabs, six action buttons and URL input visible, JavaScript and IPC ready"}else{"FAIL: HTML readiness check failed"});*flow=ControlFlow::Exit;}},
+ "ui-ready"=>{if let Some(ref bv)=parse_test{let _=proxy.send_event(Msg::Ui(json!({"action":"parse","url":bv})));}if smoke{let valid=v["buttons"].as_u64()==Some(17)&&v["tabs"].as_u64()==Some(4)&&v["transcription"].as_bool()==Some(true)&&v["input"].as_bool()==Some(true)&&v["visible"].as_bool()==Some(true)&&v["update"].as_bool()==Some(true);let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("smoke-test.txt"),if valid{"PASS: four tabs, local transcription controls, URL input, JavaScript and IPC ready"}else{"FAIL: HTML readiness check failed"});*flow=ControlFlow::Exit;}else if let Some(ref path)=transcript_test{transcript.set_test_file(PathBuf::from(path),&ui);let _=ui.evaluate_script("switchPlatform('transcribe');");let _=proxy.send_event(Msg::Ui(json!({"platform":"transcribe","action":"transcribe-start","language":"zh"})));}},
  "login"=>{login_open=true;let target=if current_url.is_empty(){"https://www.bilibili.com/"}else{&current_url};let _=browser.load_url(target);login_probe=Some(Instant::now()+Duration::from_secs(3));browser_window.set_visible(true);browser_window.set_focus();},
  "platform-selected"=>{dy.stop();yt.stop();},
  "clear" if !busy.load(Ordering::Relaxed)&&parse_deadline.is_none()=>{selected=None;stop_preview(&browser,None);},

@@ -1,6 +1,6 @@
 [package]
 name = "bili-downloader"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
 
 [dependencies]
@@ -10,4 +10,6 @@ serde_json = "1"
 url = "2"
 windows-core = "=0.61.2"
 webview2-com = "=0.38.2"
-windows = { version = "=0.61.3", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows = { version = "=0.61.3", features = ["Win32_Foundation", "Win32_UI_Controls_Dialogs", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+[workspace]

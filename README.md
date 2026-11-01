@@ -1,12 +1,24 @@
+# 视频下载助手 v0.4.0：B站 / 抖音 / YouTube / 语音转文字
+
+新增“语音转文字”选项卡：打开手机 M4A、MP3、WAV 或视频文件，使用本机 NVIDIA GPU 与 Faster-Whisper large-v3 转写为 UTF-8 TXT。模型使用 INT8/FP16 计算，不会自动改用 CPU，也不会上传录音。界面支持中文、英语或自动识别，显示转写进度，可停止任务及打开结果。
+
+TXT 保存在录音文件旁，文件名为“原文件名_转写.txt”，重名时自动编号，不覆盖录音或已有文本。文本为自动识别结果，未做说话人分离；人名、地名、数字仍需核对。
+
+首次使用：需要 NVIDIA GPU、兼容 CUDA 12 的驱动、Python 3.11/3.12 和 FFmpeg。点击选项卡里的“首次使用：准备转写环境”，或运行同目录“准备语音转写环境.cmd”。脚本建立独立 Python 环境，安装 Faster-Whisper/CUDA 运行库，并从 Systran/faster-whisper-large-v3 下载约3GB模型。准备时需要联网，正式转写只使用本机文件与缓存。已有本机 Faster-Whisper 环境和模型时可直接点“检查环境”。显存不足时先关闭其他 GPU 应用，不会悄悄换成 small 模型或 CPU。
+
+模型查找顺序：BILI_WHISPER_MODEL 环境变量、程序目录 models/faster-whisper-large-v3、用户 Models/whisper/faster-whisper-large-v3、Hugging Face 本地缓存。可用 BILI_WHISPER_PYTHON 指定 Python；默认优先使用准备脚本创建的独立环境，其次使用本机 Python。
+
+三种平台的下载与登录方式如下：
+
 # 视频下载助手：B站 / 抖音 / YouTube
 
-用 Rust 编写的 Windows 桌面视频下载工具，当前分支为 **v0.3.2 试用版**。提供“B站下载”“抖音下载”“YouTube 下载”三个选项卡，分别保存网址、解析结果和本机网页登录状态。B站继续下载音视频并合并成 MP4；抖音和 YouTube 支持单条视频、可用画质选择和文件核验。
+用 Rust 编写的 Windows 桌面视频下载工具，当前版本为 **v0.4.0 试用版**。提供“B站下载”“抖音下载”“YouTube 下载”和“语音转文字”四个选项卡；三个下载平台分别保存网址、解析结果和本机网页登录状态。B站继续下载音视频并合并成 MP4；抖音和 YouTube 支持单条视频、可用画质选择和文件核验。
 
 新增抖音功能前的稳定版已保存为 [pre-douyin-v0.1.6 回退标签](https://github.com/sutony1/bili-downloader/tree/pre-douyin-v0.1.6)。仍需原版时，可下载 [v0.1.6 稳定版](https://github.com/sutony1/bili-downloader/releases/tag/v0.1.6)。
 
 ## 在另一台电脑直接运行
 
-1. 已发布的 [v0.3.0 试用版](https://github.com/sutony1/bili-downloader/releases/tag/v0.3.0) 提供 Windows x64 ZIP；v0.3.2 修复版当前先提供本地程序测试。
+1. 从 [v0.4.0 发布页](https://github.com/sutony1/bili-downloader/releases/tag/v0.4.0) 下载 Windows x64 ZIP 并完整解压。
 2. 按下面的“准备 WebView2”步骤安装或确认已有浏览器运行组件。
 3. 按下面的“准备 FFmpeg 和 FFprobe”步骤，将两个 EXE 放在下载助手旁边。
 4. 双击 `bili-downloader.exe`，选择对应平台的选项卡。需要登录时点击“登录 / 显示浏览器”，在对应的官方网页操作。B站支持扫码或 QQ 登录；抖音按网页提示扫码或手机号登录。**各平台登录独立，换电脑需要首次登录。YouTube 公开视频通常无需登录；需要账号时才勾选使用登录状态。**
@@ -185,6 +197,8 @@ node tests/douyin.test.cjs
 登录状态保存在本机 `%LOCALAPPDATA%\BiliDownloader\BrowserProfile`，与 Edge/Codex 浏览器分别保存。程序通过 B站及 QQ 官方网页完成登录；仓库和发行包不包含浏览器配置、Cookie、测试下载内容或临时播放链接。
 
 ## 版本记录
+
+- v0.4.0（试用）：新增本地 NVIDIA GPU 语音转文字选项卡，使用 Faster-Whisper large-v3 和 INT8/FP16；支持录音或视频、语言选择、进度与停止、TXT 保存及打开，附独立环境和模型准备脚本。
 
 - v0.3.2（试用）：YouTube 进度改用数字字段，在程序内生成中文百分比、文件大小、速度和预计剩余时间；三个平台增加“停止下载”，终止当前下载进程树后恢复画质选择和网址输入。
 

@@ -29,3 +29,8 @@ cookies*.txt
 cookies*.json
 Thumbs.db
 .DS_Store
+
+/local-backups/
+/test-temp/
+__pycache__/
+*.pyc
