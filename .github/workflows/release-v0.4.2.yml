@@ -33,6 +33,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           artifact-ids: '13109950412'
+          merge-multiple: true
           github-token: ${{ github.token }}
           run-id: '41371741306'
           path: release-assets
