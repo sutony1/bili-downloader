@@ -184,7 +184,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let events = EventLoopBuilder::<Msg>::with_user_event().build();
     let proxy = events.create_proxy();
     let window = WindowBuilder::new()
-        .with_title("视频下载助手 v0.4.1 试用版")
+        .with_title("视频下载助手 v0.4.2 试用版")
         .with_visible(
             !media_smoke
                 && transcript_test.is_none()
@@ -329,7 +329,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
  Event::UserEvent(Msg::DouyinCapture(v))=>dy.captured(v,&ui,&proxy,&busy,&downloads),
  Event::UserEvent(Msg::DouyinOpen(u))=>{let _=dy.browser.load_url(&u);dy.window.set_visible(true);dy.window.set_focus();},
  Event::UserEvent(Msg::Ui(v))=>match v["action"].as_str().unwrap_or(""){
- "ui-ready"=>{if let Some(ref bv)=parse_test{let _=proxy.send_event(Msg::Ui(json!({"action":"parse","url":bv})));}if smoke{let valid=v["buttons"].as_u64()==Some(17)&&v["tabs"].as_u64()==Some(4)&&v["transcription"].as_bool()==Some(true)&&v["input"].as_bool()==Some(true)&&v["visible"].as_bool()==Some(true)&&v["update"].as_bool()==Some(true);let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("smoke-test.txt"),if valid{"PASS: four tabs, local transcription controls, URL input, JavaScript and IPC ready"}else{"FAIL: HTML readiness check failed"});*flow=ControlFlow::Exit;}else if let Some(ref path)=transcript_test{transcript.set_test_file(PathBuf::from(path),&ui);let _=ui.evaluate_script("switchPlatform('transcribe');");let _=proxy.send_event(Msg::Ui(json!({"platform":"transcribe","action":"transcribe-start","language":"zh"})));}},
+ "ui-ready"=>{if let Some(ref bv)=parse_test{let _=proxy.send_event(Msg::Ui(json!({"action":"parse","url":bv})));}if smoke{let valid=v["buttons"].as_u64()==Some(18)&&v["tabs"].as_u64()==Some(4)&&v["transcription"].as_bool()==Some(true)&&v["input"].as_bool()==Some(true)&&v["visible"].as_bool()==Some(true)&&v["update"].as_bool()==Some(true);let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("smoke-test.txt"),if valid{"PASS: four tabs, local transcription controls, URL input, JavaScript and IPC ready"}else{"FAIL: HTML readiness check failed"});*flow=ControlFlow::Exit;}else if let Some(ref path)=transcript_test{transcript.set_test_file(PathBuf::from(path),&ui);let _=ui.evaluate_script("switchPlatform('transcribe');");let _=proxy.send_event(Msg::Ui(json!({"platform":"transcribe","action":"transcribe-start","language":"zh"})));}},
  "login"=>{login_open=true;let target=if current_url.is_empty(){"https://www.bilibili.com/"}else{&current_url};let _=browser.load_url(target);login_probe=Some(Instant::now()+Duration::from_secs(3));browser_window.set_visible(true);browser_window.set_focus();},
  "platform-selected"=>{dy.stop();yt.stop();},
  "clear" if !busy.load(Ordering::Relaxed)&&parse_deadline.is_none()=>{selected=None;stop_preview(&browser,None);},

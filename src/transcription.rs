@@ -102,6 +102,12 @@ fn python() -> String {
 }
 
 impl Transcription {
+    fn clear_selection(&mut self) -> Value {
+        self.input = None;
+        self.output = None;
+        json!({"input":"","output":"","progress":0,"preview":"","status":"请打开或拖入下一个录音文件","info":"large-v3 · 本机 GPU","log":"已清空当前选择和转写显示；已保存的录音及 TXT 文件均保留。"})
+    }
+
     fn select_input(&mut self, path: PathBuf, ui: &WebView) {
         self.input = Some(path.clone());
         self.output = None;
@@ -149,7 +155,10 @@ impl Transcription {
         if busy.load(Ordering::Relaxed) {
             return;
         }
-        if action == "transcribe-prepare" {
+        if action == "transcribe-clear" {
+            let cleared = self.clear_selection();
+            update(ui, cleared);
+        } else if action == "transcribe-prepare" {
             if let Ok(exe) = std::env::current_exe() {
                 let script = exe.with_file_name("prepare-transcription.ps1");
                 if script.is_file() {
@@ -258,7 +267,7 @@ fn run_worker(
     let root = PathBuf::from(std::env::var("LOCALAPPDATA").map_err(|e| e.to_string())?)
         .join("BiliDownloader/Transcription");
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-    let script = root.join("worker-v0.4.1.py");
+    let script = root.join("worker-v0.4.2.py");
     std::fs::write(&script, include_str!("../transcribe_audio.py")).map_err(|e| e.to_string())?;
     let log = root.join("last-error.log");
     let stderr = std::fs::File::create(&log).map_err(|e| e.to_string())?;
@@ -330,6 +339,29 @@ fn run_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clearing_selection_preserves_saved_files() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let input = root.join("Cargo.toml");
+        let output = root.join("使用说明.txt");
+        let input_bytes = std::fs::read(&input).unwrap();
+        let output_bytes = std::fs::read(&output).unwrap();
+        let mut transcript = Transcription {
+            input: Some(input.clone()),
+            output: Some(output.clone()),
+            cancel: None,
+        };
+        let cleared = transcript.clear_selection();
+        assert!(transcript.input.is_none());
+        assert!(transcript.output.is_none());
+        assert_eq!(cleared["input"], "");
+        assert_eq!(cleared["output"], "");
+        assert_eq!(cleared["preview"], "");
+        assert_eq!(cleared["progress"], 0);
+        assert_eq!(std::fs::read(input).unwrap(), input_bytes);
+        assert_eq!(std::fs::read(output).unwrap(), output_bytes);
+    }
 
     #[test]
     fn drop_requires_exactly_one_regular_file() {
