@@ -32,6 +32,8 @@ use wry::{
 enum Msg {
     Ui(Value),
     Transcription(Value),
+    FilesDropped(Vec<PathBuf>),
+    FileDrag(bool),
     YouTubeParsed(u64, Result<Value, String>),
     YouTubeOpen(String),
     DouyinCapture(Value),
@@ -182,7 +184,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let events = EventLoopBuilder::<Msg>::with_user_event().build();
     let proxy = events.create_proxy();
     let window = WindowBuilder::new()
-        .with_title("视频下载助手 v0.4.0 试用版")
+        .with_title("视频下载助手 v0.4.1 试用版")
         .with_visible(
             !media_smoke
                 && transcript_test.is_none()
@@ -212,8 +214,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&profile)?;
     let mut context = WebContext::new(Some(profile));
     let p = proxy.clone();
+    let drop_proxy = proxy.clone();
     let ui = WebViewBuilder::new()
         .with_html(include_str!("ui.html"))
+        .with_drag_drop_handler(move |event| {
+            match event {
+                wry::DragDropEvent::Enter { .. } => {
+                    let _ = drop_proxy.send_event(Msg::FileDrag(true));
+                }
+                wry::DragDropEvent::Drop { paths, .. } => {
+                    let _ = drop_proxy.send_event(Msg::FileDrag(false));
+                    let _ = drop_proxy.send_event(Msg::FilesDropped(paths));
+                }
+                wry::DragDropEvent::Leave => {
+                    let _ = drop_proxy.send_event(Msg::FileDrag(false));
+                }
+                _ => {}
+            }
+            // Keep dropped files from navigating away from the application UI.
+            true
+        })
         .with_navigation_handler(|s| {
             s == "about:blank" || s.starts_with("data:text/html;charset=utf-8;base64,")
         })
@@ -297,6 +317,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
  let display=|x:Value|{let _=ui.evaluate_script(&format!("window.update({});",x));};
  match event{
  Event::WindowEvent{window_id,event:WindowEvent::CloseRequested,..}=>{if window_id==window.id(){transcript.stop();*flow=ControlFlow::Exit}else if window_id==yt.window.id(){yt.close_browser()}else if window_id==dy.window.id(){dy.close_browser()}else if window_id==popup_window.id(){popup_window.set_visible(false)}else{login_open=false;login_probe=None;stop_preview(&browser,None);browser_window.set_visible(false)}},
+ Event::UserEvent(Msg::FileDrag(hovering))=>{let _=ui.evaluate_script(&format!("window.transcriptionDrag({});",hovering));},
+ Event::UserEvent(Msg::FilesDropped(paths))=>{let _=ui.evaluate_script(&format!("window.receiveDroppedFiles({});",json!(paths)));},
  Event::UserEvent(Msg::Ui(v)) if v["platform"]=="transcribe"=>{if v["action"]=="platform-selected"{yt.stop();dy.stop();stop_preview(&browser,popup_view.borrow().as_ref());}transcript.ui(&v,&ui,&proxy,&busy);},
  Event::UserEvent(Msg::Transcription(v))=>{if v["output"].is_string(){transcript_result=Some(v.clone());}let finished=v["busy"]==false;transcript.event(v.clone(),&ui);if finished&&transcript_test.is_some(){let report=json!({"success":transcript_result.as_ref().and_then(|r|r["output"].as_str()).is_some_and(|p|std::path::Path::new(p).is_file()),"result":transcript_result,"final":v});let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("transcription-test.json"),serde_json::to_vec_pretty(&report).unwrap());*flow=ControlFlow::Exit;}},
  Event::UserEvent(Msg::Ui(v)) if v["action"]=="stop"=>{let requested=match v["platform"].as_str(){Some("youtube")=>yt.cancel_download(),Some("douyin")=>dy.cancel_download(),_=>{if let Some(cancel)=&bili_cancel{cancel.store(true,Ordering::Relaxed);true}else{false}}};if requested{stopping=true;display(json!({"platform":v["platform"],"status":"正在停止下载…","stopping":true}));}},

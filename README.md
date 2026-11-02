@@ -203,11 +203,19 @@ node tests/douyin.test.cjs
 - GPU 计算类型按 CTranslate2 实际检测结果选择：优先 `int8_float16`（用于支持该模式的新显卡，例如 RTX 5060），否则使用 `int8_float32`（GTX 1060）。界面和日志显示实际模式，不自动切换 CPU。
 - 准备脚本的 GPU 检查会加载 large-v3 并对一秒静音执行推理，检查 CUDA 内核和运行库是否可用。检查通过不代表任意长度录音都不会显存不足。
 - GTX 1060 6GB 已验证加载和推理；RTX 5060 尚未在实机验证，仍需匹配的 NVIDIA 驱动和 CUDA 运行库。计算类型检测通过后若报内核、运行库或显存错误，请根据具体错误处理。
-- 已有 v0.4.0 发行包可从仓库下载新版 `prepare-transcription.ps1` 和 `transcribe_audio.py`，覆盖到 EXE 同目录，再运行“准备语音转写环境.cmd”，无需删除已下载模型。
+- 旧版发行包应更新到 v0.4.1 的 EXE 和配套脚本，再运行“准备语音转写环境.cmd”；无需删除已下载模型。仅替换外部 Python 脚本不会更新旧 EXE 内嵌的 worker。
 
 计算类型与超时配置参考 [CTranslate2 文档](https://opennmt.net/CTranslate2/quantization.html)、[Hugging Face 文档](https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables)。
 
+## 录音文件拖放
+
+在“语音转文字”选项卡中，从资源管理器将一个录音或视频文件拖到下载助手窗口，松开后确认路径，再点击“开始转写”。支持中文文件名和深层目录；也可继续使用“打开文件”按钮。一次只能选择一个文件；拖入文件夹或多个文件会提示，保留原来的选择。下载、检查环境或转写期间不能更换文件。其他平台选项卡不接收录音拖放。
+
+v0.4.1 需要更新 EXE：拖放界面、Windows 文件事件和转写 worker 均编译在程序中，仅替换 Python 脚本不能更新旧 EXE 内的转写逻辑。已有模型和独立 Python 环境可以复用。
+
 ## 版本记录
+
+- v0.4.1（试用）：增加录音/视频文件拖放、拖入高亮和单文件检查；包含下载超时与 GTX 1060 / 新显卡计算类型自动选择改进。
 
 - v0.4.0（试用）：新增本地 NVIDIA GPU 语音转文字选项卡，使用 Faster-Whisper large-v3 和 INT8/FP16；支持录音或视频、语言选择、进度与停止、TXT 保存及打开，附独立环境和模型准备脚本。
 

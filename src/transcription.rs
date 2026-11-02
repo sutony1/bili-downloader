@@ -61,6 +61,17 @@ fn pick_file() -> Result<Option<PathBuf>, String> {
     }
 }
 
+fn dropped_file(paths: &[PathBuf]) -> Result<PathBuf, String> {
+    if paths.len() != 1 {
+        return Err("请一次拖入一个录音或视频文件。".into());
+    }
+    let path = &paths[0];
+    if !path.is_file() {
+        return Err("请拖入可读取的录音或视频文件，不能拖入文件夹。".into());
+    }
+    Ok(path.clone())
+}
+
 fn python() -> String {
     if let Ok(p) = std::env::var("BILI_WHISPER_PYTHON") {
         return p;
@@ -91,6 +102,14 @@ fn python() -> String {
 }
 
 impl Transcription {
+    fn select_input(&mut self, path: PathBuf, ui: &WebView) {
+        self.input = Some(path.clone());
+        self.output = None;
+        update(
+            ui,
+            json!({"input":path,"output":"","progress":0,"status":"录音已选择，可以开始转写","preview":"","log":"TXT 将保存在录音旁；同名文件自动编号，不覆盖已有文件。"}),
+        );
+    }
     pub fn set_test_file(&mut self, path: PathBuf, ui: &WebView) {
         self.input = Some(path.clone());
         update(ui, json!({"input":path}));
@@ -145,19 +164,28 @@ impl Transcription {
                 } else {
                     update(
                         ui,
-                        json!({"status":"未找到准备脚本，请使用完整解压的 v0.4.0 程序包"}),
+                        json!({"status":"未找到准备脚本，请使用完整解压的程序包"}),
                     );
                 }
+            }
+        } else if action == "transcribe-drop" {
+            let paths = v["paths"].as_array().and_then(|values| {
+                values
+                    .iter()
+                    .map(|value| value.as_str().map(PathBuf::from))
+                    .collect::<Option<Vec<_>>>()
+            });
+            match paths
+                .ok_or_else(|| "无法读取拖入的文件路径。".to_string())
+                .and_then(|paths| dropped_file(&paths))
+            {
+                Ok(path) => self.select_input(path, ui),
+                Err(error) => update(ui, json!({"status":"未更换录音文件","log":error})),
             }
         } else if action == "transcribe-pick" {
             match pick_file() {
                 Ok(Some(path)) => {
-                    self.input = Some(path.clone());
-                    self.output = None;
-                    update(
-                        ui,
-                        json!({"input":path,"output":"","progress":0,"status":"录音已选择，可以开始转写","preview":"","log":"TXT 将保存在录音旁；同名文件自动编号，不覆盖已有文件。"}),
-                    );
+                    self.select_input(path, ui);
                 }
                 Ok(None) => {}
                 Err(error) => update(ui, json!({"status":"无法打开文件","log":error})),
@@ -230,7 +258,7 @@ fn run_worker(
     let root = PathBuf::from(std::env::var("LOCALAPPDATA").map_err(|e| e.to_string())?)
         .join("BiliDownloader/Transcription");
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-    let script = root.join("worker-v0.4.0.py");
+    let script = root.join("worker-v0.4.1.py");
     std::fs::write(&script, include_str!("../transcribe_audio.py")).map_err(|e| e.to_string())?;
     let log = root.join("last-error.log");
     let stderr = std::fs::File::create(&log).map_err(|e| e.to_string())?;
@@ -297,4 +325,19 @@ fn run_worker(
         }));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drop_requires_exactly_one_regular_file() {
+        let executable = std::env::current_exe().unwrap();
+        assert_eq!(dropped_file(&[executable.clone()]).unwrap(), executable);
+        assert!(dropped_file(&[]).is_err());
+        assert!(dropped_file(&[executable.clone(), executable.clone()]).is_err());
+        assert!(dropped_file(&[executable.parent().unwrap().to_path_buf()]).is_err());
+        assert!(dropped_file(&[executable.join("missing.m4a")]).is_err());
+    }
 }
