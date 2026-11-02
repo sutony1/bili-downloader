@@ -50,13 +50,26 @@ def model_dir():
         raise RuntimeError('未找到 large-v3 模型。请先运行“准备语音转写环境.cmd”，模型只需下载一次。') from None
 
 
+def select_compute_type(supported):
+    # Prefer FP16 on recent GPUs; Pascal (e.g. GTX 1060) needs FP32 layers.
+    for compute_type in ('int8_float16', 'int8_float32'):
+        if compute_type in supported:
+            return compute_type
+    raise RuntimeError('当前 GPU 没有可用的 INT8 计算类型；检测结果：'
+                       + ', '.join(sorted(supported)) + '。本功能不会自动改用 CPU。')
+
+
+def gpu_compute_type():
+    import ctranslate2
+    return select_compute_type(ctranslate2.get_supported_compute_types('cuda', device_index=0))
+
+
 def check():
     dll_setup()
     import ctranslate2
     if ctranslate2.get_cuda_device_count() < 1:
         raise RuntimeError('未检测到可用 NVIDIA GPU；本功能不会自动改用 CPU。')
-    if 'int8_float16' not in ctranslate2.get_supported_compute_types('cuda'):
-        raise RuntimeError('当前 GPU 不支持所需的 int8_float16 计算，请检查 NVIDIA 驱动。')
+    gpu_compute_type()
     folder = model_dir()
     return folder
 
@@ -111,11 +124,12 @@ def transcribe(source, language, report=emit):
     started = time.monotonic()
     report(status='正在检查 GPU 和 large-v3 模型…', busy=True, progress=0)
     folder = check()
+    compute_type = gpu_compute_type()
     from faster_whisper import WhisperModel
     report(status='正在加载 large-v3 到 GPU…', busy=True)
     model = WhisperModel(folder, device='cuda', device_index=0,
-                         compute_type='int8_float16', local_files_only=True, num_workers=1)
-    report(status='正在识别录音…', busy=True, info='Faster-Whisper large-v3 · 本机 GPU · INT8/FP16')
+                         compute_type=compute_type, local_files_only=True, num_workers=1)
+    report(status='正在识别录音…', busy=True, info=f'Faster-Whisper large-v3 · 本机 GPU · {compute_type}')
     import numpy as np
     ffmpeg = os.environ.get('BILI_WHISPER_FFMPEG') or shutil.which('ffmpeg')
     if not ffmpeg:
@@ -158,7 +172,7 @@ def transcribe(source, language, report=emit):
     output = write_result(source, paragraphs)
     report(status='转写完成 ✓', busy=False, progress=100, output=str(output),
            info=f'录音 {info.duration:.1f} 秒 · 用时 {time.monotonic()-started:.1f} 秒 · 共 {count} 段',
-           log=f'TXT 已保存到：{output}\nFaster-Whisper large-v3 · CUDA · int8_float16；未上传录音。')
+           log=f'TXT 已保存到：{output}\nFaster-Whisper large-v3 · CUDA · {compute_type}；未上传录音。')
     return output
 
 
@@ -170,6 +184,8 @@ def main():
     parser.add_argument('--prepare', action='store_true')
     args = parser.parse_args()
     if args.prepare:
+        os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '300')
+        os.environ.setdefault('HF_HUB_ETAG_TIMEOUT', '60')
         from huggingface_hub import snapshot_download
         folder = Path.home() / 'Models' / 'whisper' / 'faster-whisper-large-v3'
         print('Downloading official large-v3 model (~3 GB). Audio is never uploaded.', flush=True)
@@ -178,7 +194,18 @@ def main():
         print('Model ready:', folder)
     elif args.check:
         folder = check()
-        emit(status='GPU 和 large-v3 模型检查通过', busy=False, info='本机 NVIDIA GPU · large-v3 · INT8/FP16', log=folder)
+        compute_type = gpu_compute_type()
+        # Verify CUDA kernels and runtime DLLs as well as the reported capabilities.
+        from faster_whisper import WhisperModel
+        import numpy as np
+        print(f'Checking large-v3 CUDA inference ({compute_type})...', flush=True)
+        model = WhisperModel(folder, device='cuda', device_index=0,
+                             compute_type=compute_type, local_files_only=True, num_workers=1)
+        segments, _ = model.transcribe(np.zeros(16000, dtype=np.float32),
+                                       language='zh', beam_size=1, vad_filter=False)
+        list(segments)
+        emit(status='GPU 和 large-v3 模型检查通过', busy=False,
+             info=f'本机 NVIDIA GPU · large-v3 · {compute_type}', log=folder)
     elif args.input:
         transcribe(args.input, args.language)
     else:

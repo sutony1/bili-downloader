@@ -196,6 +196,17 @@ node tests/douyin.test.cjs
 
 登录状态保存在本机 `%LOCALAPPDATA%\BiliDownloader\BrowserProfile`，与 Edge/Codex 浏览器分别保存。程序通过 B站及 QQ 官方网页完成登录；仓库和发行包不包含浏览器配置、Cookie、测试下载内容或临时播放链接。
 
+## 语音转写环境兼容与排错
+
+- pip 安装使用 300 秒读取超时和 10 次连接重试；保留缓存和已有虚拟环境，网络中断后可重新运行准备脚本。
+- 模型下载默认读取超时为 300 秒、元数据超时为 60 秒；可通过 `HF_HUB_DOWNLOAD_TIMEOUT` 和 `HF_HUB_ETAG_TIMEOUT` 覆盖。
+- GPU 计算类型按 CTranslate2 实际检测结果选择：优先 `int8_float16`（用于支持该模式的新显卡，例如 RTX 5060），否则使用 `int8_float32`（GTX 1060）。界面和日志显示实际模式，不自动切换 CPU。
+- 准备脚本的 GPU 检查会加载 large-v3 并对一秒静音执行推理，检查 CUDA 内核和运行库是否可用。检查通过不代表任意长度录音都不会显存不足。
+- GTX 1060 6GB 已验证加载和推理；RTX 5060 尚未在实机验证，仍需匹配的 NVIDIA 驱动和 CUDA 运行库。计算类型检测通过后若报内核、运行库或显存错误，请根据具体错误处理。
+- 已有 v0.4.0 发行包可从仓库下载新版 `prepare-transcription.ps1` 和 `transcribe_audio.py`，覆盖到 EXE 同目录，再运行“准备语音转写环境.cmd”，无需删除已下载模型。
+
+计算类型与超时配置参考 [CTranslate2 文档](https://opennmt.net/CTranslate2/quantization.html)、[Hugging Face 文档](https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables)。
+
 ## 版本记录
 
 - v0.4.0（试用）：新增本地 NVIDIA GPU 语音转文字选项卡，使用 Faster-Whisper large-v3 和 INT8/FP16；支持录音或视频、语言选择、进度与停止、TXT 保存及打开，附独立环境和模型准备脚本。

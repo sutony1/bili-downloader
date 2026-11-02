@@ -36,5 +36,21 @@ class TranscriptSafetyTests(unittest.TestCase):
             self.assertEqual(worker.simplify('語音轉寫測試'), '语音转写测试')
 
 
+class ComputeTypeTests(unittest.TestCase):
+    def test_modern_gpu_prefers_fp16(self):
+        self.assertEqual(worker.select_compute_type(
+            {'float32', 'float16', 'int8_float32', 'int8_float16'}), 'int8_float16')
+
+    def test_gtx1060_uses_int8_float32(self):
+        self.assertEqual(worker.select_compute_type(
+            {'float32', 'int8', 'int8_float32'}), 'int8_float32')
+
+    def test_unsupported_gpu_is_rejected(self):
+        for supported in (set(), {'float32'}):
+            with self.subTest(supported=supported):
+                with self.assertRaisesRegex(RuntimeError, '不会自动改用 CPU'):
+                    worker.select_compute_type(supported)
+
+
 if __name__ == '__main__':
     unittest.main()
