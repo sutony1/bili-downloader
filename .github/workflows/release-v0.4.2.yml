@@ -1,0 +1,76 @@
+name: Publish v0.4.2 release
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/release-v0.4.2.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: publish-v0.4.2
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify original Windows build
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: run } = await github.rest.actions.getWorkflowRun({
+              ...context.repo, run_id: 41371741306
+            });
+            if (run.head_sha !== '73ac534b10f27161e9ebc0ec889b9db44e9462f7' ||
+                run.conclusion !== 'success') {
+              throw new Error('Expected successful v0.4.2 Windows build');
+            }
+      - name: Download verified Windows package
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: '13109950412'
+          github-token: ${{ github.token }}
+          run-id: '41371741306'
+          path: release-assets
+      - name: Verify checksums and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          sha256sum --check SHA256SUMS.txt
+          test -s bili-downloader-v0.4.2-windows-x64.zip
+          cat > release-notes.md <<'NOTES'
+          ## 更新内容
+
+          - 语音转文字支持拖入录音或视频，兼容中文文件名和深层目录。
+          - 新增“清空”按钮，清除录音选择、TXT 路径、预览和进度，保留已保存的文件及语言选择。
+          - 下载读取超时延长至 300 秒，增加连接重试。
+          - 按 GPU 实际能力自动选择 int8_float16 或 int8_float32。GTX 1060 6GB 已验证；RTX 5060 尚待实机验证。
+
+          ## 下载和使用
+
+          下载下方 **bili-downloader-v0.4.2-windows-x64.zip**，全部解压后运行 **bili-downloader.exe**。
+
+          新电脑需准备 WebView2 Runtime、FFmpeg 和 FFprobe。首次使用语音转写，请安装 Python 3.11 或 3.12，再运行包中的“准备语音转写环境.cmd”，下载依赖及 large-v3 模型（约 3GB）并通过 GPU 检查。已有模型和独立 Python 环境可以复用。YouTube 组件通过“准备YouTube组件.cmd”准备。
+
+          本程序包不包含浏览器登录信息、用户录音、转写文件或模型。音频在本机处理。
+
+          ## 验证
+
+          Windows 自动测试和编译、本机启动检查均通过。附件使用原始构建产物，并通过 SHA256 校验。
+          源码对应提交：73ac534b10f27161e9ebc0ec889b9db44e9462f7。
+          NOTES
+          if gh release view v0.4.2 >/dev/null 2>&1; then
+            echo "v0.4.2 already exists; refusing to overwrite published assets."
+            exit 1
+          fi
+          gh release create v0.4.2 --target 73ac534b10f27161e9ebc0ec889b9db44e9462f7 --draft --title "视频下载助手 v0.4.2" --notes-file release-notes.md
+          gh release upload v0.4.2 bili-downloader-v0.4.2-windows-x64.zip SHA256SUMS.txt
+          gh release edit v0.4.2 --draft=false --latest
