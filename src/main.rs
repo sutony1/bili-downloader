@@ -184,7 +184,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let events = EventLoopBuilder::<Msg>::with_user_event().build();
     let proxy = events.create_proxy();
     let window = WindowBuilder::new()
-        .with_title("视频下载助手 v0.4.2 试用版")
+        .with_title("视频下载助手 v0.4.3 试用版")
         .with_visible(
             !media_smoke
                 && transcript_test.is_none()
@@ -335,7 +335,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
  "clear" if !busy.load(Ordering::Relaxed)&&parse_deadline.is_none()=>{selected=None;stop_preview(&browser,None);},
  "folder"=>{let _=command("explorer.exe").arg(&downloads).spawn();},
  "parse" if !busy.load(Ordering::Relaxed)&&!dy.parsing()&&parse_deadline.is_none()=>{if let Some(bv)=bvid(v["url"].as_str().unwrap_or("")){selected=None;wanted=bv;parse_request+=1;parse_attempts=0;parse_deadline=Some(Instant::now()+Duration::from_secs(35));let u=format!("https://www.bilibili.com/video/{wanted}/");current_url=u.clone();if delayed_test{delayed_navigation=Some((Instant::now()+Duration::from_secs(6),u));}else{let _=browser.load_url(&u);}pending=Some(Instant::now()+Duration::from_secs(1));display(json!({"status":"正在解析…","info":"正在加载视频页面","log":"正在等待页面就绪；若网络请求失败，会显示具体原因。","ready":false,"busy":true}));}else{display(json!({"status":"请输入有效的 bilibili.com 视频网址或BV编号"}));}},
- "download" if !busy.load(Ordering::Relaxed)=>{if let Some(data)=selected.clone(){busy.store(true,Ordering::Relaxed);let p=proxy.clone();let dir=downloads.clone();let lock=busy.clone();let cancel=Arc::new(AtomicBool::new(false));bili_cancel=Some(cancel.clone());display(json!({"status":"开始下载","busy":true,"downloading":true,"stopping":false}));std::thread::spawn(move||{let result=download(&data,&dir,&cancel,|x|{let _=p.send_event(Msg::Progress(x));});lock.store(false,Ordering::Relaxed);let x=match result{Ok(x)=>x,Err(e)=>download_process::result(e)};let _=p.send_event(Msg::DownloadFinished(x));});}},_=>{}},
+ "download" if !busy.load(Ordering::Relaxed)=>{if let Some(data)=selected.as_ref().and_then(|data| bili_selection(data,v["quality"].as_str().unwrap_or(""))){busy.store(true,Ordering::Relaxed);let p=proxy.clone();let dir=downloads.clone();let lock=busy.clone();let cancel=Arc::new(AtomicBool::new(false));bili_cancel=Some(cancel.clone());display(json!({"status":"开始下载","busy":true,"downloading":true,"stopping":false}));std::thread::spawn(move||{let result=download(&data,&dir,&cancel,|x|{let _=p.send_event(Msg::Progress(x));});lock.store(false,Ordering::Relaxed);let x=match result{Ok(x)=>x,Err(e)=>download_process::result(e)};let _=p.send_event(Msg::DownloadFinished(x));});}},_=>{}},
  Event::UserEvent(Msg::Capture(v))=>{
  if v["action"]=="auth-return"{let _=proxy.send_event(Msg::PopupClosed);}
  else if v["action"]=="auth-status"{let state=v["state"].as_str().unwrap_or("error");if login_state_test&&(!return_smoke||oauth_checked){let _=std::fs::write(std::env::current_exe().unwrap().with_file_name(if return_smoke{"auth-return-test.txt"}else{"login-state-test.txt"}),format!("state={} blank={}",state,v["blank"]));*flow=ControlFlow::Exit;}let _=ui.evaluate_script(&format!("window.setLogin({});",json!(match state{"logged-in"=>"已登录B站","logged-out"=>"尚未登录B站",_=>"登录状态检测失败，可稍后重试"})));if state=="logged-in"&&v["blank"].as_bool()==Some(true){let target=if current_url.is_empty(){"https://www.bilibili.com/"}else{&current_url};let _=browser.load_url(target);}if login_open{login_probe=Some(Instant::now()+Duration::from_secs(5));}}
@@ -346,7 +346,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
      if parse_attempts<2{pending=Some(Instant::now()+Duration::from_secs(2));display(json!({"status":"正在重试解析…","log":e,"busy":true}));}
      else{parse_deadline=None;pending=None;display(json!({"status":"解析失败，可重试","log":e,"busy":false}));if parse_test.is_some(){let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("parse-smoke-test.json"),serde_json::to_vec_pretty(&json!({"error":e})).unwrap());*flow=ControlFlow::Exit;}}
    }else if media_url_allowed(v["video"].as_str().unwrap_or(""))&&media_url_allowed(v["audio"].as_str().unwrap_or("")){
-     parse_deadline=None;pending=None;display(json!({"status":"解析成功，可以下载","info":format!("{} · {} · {}×{} · 约{}秒",v["title"].as_str().unwrap_or(""),v["quality"].as_str().unwrap_or(""),v["width"],v["height"],v["duration"]),"ready":true,"busy":false}));
+     let formats=if let Some(formats)=v["formats"].as_array(){formats.iter().filter(|f| media_url_allowed(f["video"].as_str().unwrap_or(""))).map(|f|json!({"id":f["id"],"label":f["label"]})).collect::<Vec<_>>()}else{vec![json!({"id":"current","label":v["quality"]})]};
+     parse_deadline=None;pending=None;display(json!({"formats":formats,"status":"解析成功，可以下载","info":format!("{} · {} · {}×{} · 约{}秒",v["title"].as_str().unwrap_or(""),v["quality"].as_str().unwrap_or(""),v["width"],v["height"],v["duration"]),"ready":true,"busy":false}));
      if parse_test.is_some(){if std::env::args().any(|x|x=="--verify-media"){let _=std::fs::write(std::env::current_dir().unwrap().join("verification-input-latest.json"),serde_json::to_vec(&v).unwrap());}let result=json!({"title":v["title"],"width":v["width"],"height":v["height"],"quality":v["quality"],"duration":v["duration"],"muted":browser_is_muted(&browser).unwrap_or(false),"delayed":delayed_test});let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("parse-smoke-test.json"),serde_json::to_vec_pretty(&result).unwrap());*flow=ControlFlow::Exit;}
      selected=Some(v);
    }else{parse_deadline=None;pending=None;display(json!({"status":"解析结果不完整","log":"未取得有效音视频地址，请重试。","busy":false}));if parse_test.is_some(){let _=std::fs::write(std::env::current_exe().unwrap().with_file_name("parse-smoke-test.json"),"{\"error\":\"invalid media URL\"}");*flow=ControlFlow::Exit;}}
@@ -384,6 +385,22 @@ if smoke&&!inspected&&boot.elapsed()>Duration::from_secs(3){inspected=true;let _
  }
  });
 }
+fn bili_selection(data: &Value, id: &str) -> Option<Value> {
+    let mut choice = data.clone();
+    if let Some(formats) = data["formats"].as_array() {
+        let stream = formats.iter().find(|f| f["id"].as_str() == Some(id))?;
+        if !media_url_allowed(stream["video"].as_str().unwrap_or("")) {
+            return None;
+        }
+        for key in ["video", "width", "height", "quality"] {
+            choice[key] = stream[key].clone();
+        }
+    } else if id != "current" {
+        return None;
+    }
+    Some(choice)
+}
+
 fn download(
     data: &Value,
     dir: &PathBuf,

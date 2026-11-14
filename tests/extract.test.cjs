@@ -12,6 +12,7 @@ async function run(overrides={}) {
  let call=0;
  const success=await run({fetch:async()=>({ok:true,json:async()=>++call===1?{code:0,data:{cid:1,title:'Test',duration:60,pages:[{}]}}:{code:0,data:{dash:{video:[{id:64,width:1280,height:720,baseUrl:'https://cdn.bilivideo.com/v720'},{id:80,width:1920,height:1080,baseUrl:'https://cdn.bilivideo.com/v1080'}],audio:[{bandwidth:10,baseUrl:'https://node.mcdn.bilivideo.cn/a',backupUrl:['https://cdn.bilivideo.com/a']}]}}}})});
  assert.equal(success[0].started,true);assert.equal(success.at(-1).width,1920);assert.equal(success.at(-1).requestId,17);assert.equal(success.at(-1).audio,"https://cdn.bilivideo.com/a");
+ assert.deepEqual(success.at(-1).formats.map(f=>[f.id,f.width,new URL(f.video).pathname]),[['80',1920,'/v1080'],['64',1280,'/v720']]);
  const timeout=await run({setTimeout:(fn,ms)=>setTimeout(fn,Math.min(ms,5)),fetch:async(_,options)=>new Promise((_,reject)=>options.signal.addEventListener('abort',()=>reject(Object.assign(Error('abort'),{name:'AbortError'}))))});
  assert.match(timeout.at(-1).error,/超时/);
  const fallback=await run({fetch:async()=>{throw Error('network');},performance:{getEntriesByType:()=>[{name:'https://cdn.bilivideo.com/clip-100.m4s'},{name:'https://node.mcdn.bilivideo.cn/clip-30280.m4s'}]},document:{readyState:'complete',querySelector:s=>s==='video'?{duration:25,videoWidth:480,videoHeight:852}:{textContent:'Fallback'}}});

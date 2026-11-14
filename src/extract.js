@@ -18,9 +18,19 @@
   const d=view.data;if(d.pages?.length>1)throw Error('目前仅支持单P视频');
   const play=await getJson('https://api.bilibili.com/x/player/playurl?bvid='+bv+'&cid='+d.cid+'&qn=127&fnval=4048&fourk=1');
   if(play.code!==0||!play.data?.dash?.video?.length)throw Error('播放接口暂不可用');
-  const p=play.data;const v=[...p.dash.video].sort((a,b)=>(b.id-a.id)||(b.width*b.height-a.width*a.height)||(parseFloat(b.frameRate||b.frame_rate)-parseFloat(a.frameRate||a.frame_rate))||(b.bandwidth-a.bandwidth))[0];
+  const p=play.data;const streams=[...p.dash.video].sort((a,b)=>(b.id-a.id)||(b.width*b.height-a.width*a.height)||(parseFloat(b.frameRate||b.frame_rate)-parseFloat(a.frameRate||a.frame_rate))||(b.bandwidth-a.bandwidth));
   const a=[...(p.dash.audio||[])].sort((a,b)=>b.bandwidth-a.bandwidth)[0];if(!a)throw Error('未找到音频');
-  send({title:d.title,duration:d.duration,video:mediaUrl(v),audio:mediaUrl(a),quality:p.support_formats?.find(x=>x.quality===v.id)?.new_description||p.support_formats?.find(x=>x.quality===v.id)?.display_desc||String(v.id),width:v.width,height:v.height});
+  const formats=[];
+  const seen=new Set();
+  for(const v of streams){
+   const video=mediaUrl(v), id=String(v.id);
+   if(!video||seen.has(id))continue;
+   seen.add(id);
+   const quality=p.support_formats?.find(x=>x.quality===v.id)?.new_description||p.support_formats?.find(x=>x.quality===v.id)?.display_desc||('画质 '+id);
+   formats.push({id,label:quality+' · '+v.width+'×'+v.height,quality,video,width:v.width,height:v.height});
+  }
+  if(!formats.length||!mediaUrl(a))throw Error('未找到有效音视频地址');
+  send({title:d.title,duration:d.duration,...formats[0],audio:mediaUrl(a),formats});
  }catch(err){
   const perf=performance.getEntriesByType('resource').map(x=>x.name).filter(x=>{try{const u=new URL(x);return u.protocol==='https:'&&mediaHost(u.hostname)&&u.pathname.endsWith('.m4s')}catch{return false}});
   const vids=perf.filter(x=>!/-302\d+\.m4s/.test(x)),auds=perf.filter(x=>/-302\d+\.m4s/.test(x));const player=document.querySelector('video');
